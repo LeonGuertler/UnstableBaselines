@@ -156,7 +156,7 @@ def collect_episode_once(env_id: str, buffer, actor1, actor2, use_all_data: bool
         # extract environment action
         extracted_action, format_feedback = extract_action_and_format_feedback(raw_action=action)
         done, _ = env.step(action=extracted_action)
-        if not use_all_data and pid == a1_pid:
+        if use_all_data or pid == a1_pid:
             traj.pid.append(pid)
             traj.obs.append(formatted_prompt)
             traj.actions.append(action)
@@ -267,6 +267,8 @@ def main():
     ap.add_argument("--vf_coef", type=float, default=1.0)
     ap.add_argument("--kl_penalty_coef", type=float, default=0.0)
     ap.add_argument("--gradient_clip", type=float, default=1.0)
+
+    ap.add_argument("--reward_strategy", type=str, default="win-loss", choices=["win-loss", "raw"])
 
     args = ap.parse_args() 
 
