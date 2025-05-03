@@ -12,12 +12,12 @@ from transformers import AutoModelForCausalLM, AutoTokenizer
 import textarena as ta
 
 # local imports
-from learners import PPOLearner
+from learners import PPOLearner, REACTORLearner
 from trajectory_buffer import Trajectory, Step, StepBuffer
 from utils import REWARD_TRANSFORMATIONS, validate_requested_gpus, average_weights, reserve_resources_for_learners
 
 @ray.remote(num_gpus=1, num_cpus=1)
-class RayLearner(PPOLearner):
+class RayLearner(REACTORLearner):
     def __init__(self, args):
         super().__init__(args)
 
@@ -234,7 +234,7 @@ def main():
     ap.add_argument("--clip", type=float, default=0.2)
     ap.add_argument("--gamma", type=float, default=0.99)
     ap.add_argument("--lam", type=float, default=0.95)
-    ap.add_argument("--lr", type=float, default=1e-6)
+    ap.add_argument("--lr", type=float, default=5e-6)
     ap.add_argument("--base_port", type=int, default=8000)
     ap.add_argument("--num_actors", type=int, default=3)
     ap.add_argument("--num_learners", type=int, default=1)
@@ -269,6 +269,15 @@ def main():
     ap.add_argument("--gradient_clip", type=float, default=1.0)
 
     ap.add_argument("--reward_strategy", type=str, default="win-loss", choices=["win-loss", "raw"])
+
+
+    # REACTOR vars
+    ap.add_argument("--beta_js", type=float, default=0.1)
+    ap.add_argument("--ent_coef", type=float, default=0.001)
+    ap.add_argument("--sd_power", type=float, default=0.5)
+    ap.add_argument("--huber_delta", type=float, default=1.0)
+    ap.add_argument("--baseline_tau", type=float, default=0.01)
+    
 
     args = ap.parse_args() 
 

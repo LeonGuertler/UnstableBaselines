@@ -78,12 +78,12 @@ class StepBuffer:
             raise Exception(f"Unrecognized reward strategy: {self.reward_strategy}")
 
         # keep track of role advantage and normalize
-        self.role_advantage[0] = 0.95 * self.role_advantage[0] + 0.1*transformed_rewards[0]
-        self.role_advantage[1] = 0.95 * self.role_advantage[1] + 0.1*transformed_rewards[1]
+        # self.role_advantage[0] = 0.95 * self.role_advantage[0] + 0.1*transformed_rewards[0]
+        # self.role_advantage[1] = 0.95 * self.role_advantage[1] + 0.1*transformed_rewards[1]
 
-        if self.normalize_role_advantage:
-            transformed_rewards[0] = transformed_rewards[0] - self.role_advantage[0]
-            transformed_rewards[1] = transformed_rewards[1] - self.role_advantage[1]
+        # if self.normalize_role_advantage:
+        #     transformed_rewards[0] = transformed_rewards[0] - self.role_advantage[0]
+        #     transformed_rewards[1] = transformed_rewards[1] - self.role_advantage[1]
 
         n = len(trajectory.pid)
         for i in range(n):
