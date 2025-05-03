@@ -17,7 +17,7 @@ from trajectory_buffer import Trajectory, Step, StepBuffer
 from utils import REWARD_TRANSFORMATIONS, validate_requested_gpus, average_weights, reserve_resources_for_learners
 
 @ray.remote(num_gpus=1, num_cpus=1)
-class RayLearner(REACTORLearner):
+class RayLearner(PPOLearner):
     def __init__(self, args):
         super().__init__(args)
 
@@ -242,7 +242,7 @@ def main():
     ap.add_argument("--wandb", action="store_true") 
     ap.add_argument("--wandb_project_name", type=str, default="UnstableBaselines")
 
-    ap.add_argument("--max_buffer_size", type=int, default=4096)
+    ap.add_argument("--max_buffer_size", type=int, default=1024)
     ap.add_argument("--use_all_data", action="store_true") # i.e. use prev checkpoint perspective as well
     ap.add_argument("--num_collection_workers", type=int, default=128)
     ap.add_argument("--max_env_steps", type=int, default=32)
