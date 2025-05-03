@@ -50,7 +50,6 @@ class StepBuffer:
 
 
     def add_trajectory(self, trajectory: Trajectory, current_checkpoint_pid: Optional[int] = None):
-        print(f"Buffer size: {len(self.steps)}, received {len(trajectory.obs)} steps.")
         self.episode_stats["count"] += 1
 
         # check if invalid move
@@ -87,7 +86,6 @@ class StepBuffer:
             transformed_rewards[1] = transformed_rewards[1] - self.role_advantage[1]
 
         n = len(trajectory.pid)
-        print(f"adding {n} trajectories")
         for i in range(n):
             # add the format reward if necessary
             reward = transformed_rewards.get(trajectory.pid[i], 0.0)
