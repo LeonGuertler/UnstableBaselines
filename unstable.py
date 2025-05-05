@@ -124,6 +124,11 @@ def extract_action_and_format_feedback(raw_action: str) -> Tuple[str, Dict[str, 
     if think_match:
         end_idx = think_match.end()
         action = raw_action[end_idx:].strip()
+    else:
+        matches = re.findall(r'\[.*?\]', raw_action)
+        last_match = matches[-1] if matches else None
+        if last_match != None:
+            action = last_match
     
     format_feedback = {"has_think": think_match is not None, "has_answer": False, "order_correct": False}
 
@@ -155,17 +160,19 @@ def collect_episode_once(env_id: str, buffer, actor1, actor2, use_all_data: bool
 
         # extract environment action
         extracted_action, format_feedback = extract_action_and_format_feedback(raw_action=action)
+        # print(f"Step: {steps}, observation:\n{obs}\naction: {extracted_action.strip()}")
+        # print(f"\n\nAction: {action}\n\n")
         done, _ = env.step(action=extracted_action)
         if use_all_data or pid == a1_pid:
             traj.pid.append(pid)
             traj.obs.append(formatted_prompt)
             traj.actions.append(action)
             traj.format_feedbacks.append(format_feedback)
-            steps += 1
+        steps += 1
 
     traj.final_rewards = env.close() if done else {0: 0, 1: 0}
     traj.num_turns = steps
-
+    print(f"GAME FINISHED< ADDING TO BUFFER. num steps: {steps}")
     ray.get(buffer.add_trajectory.remote(traj, current_checkpoint_pid=a1_pid))
 
 def start_collection_loop(args, collector, buffer, max_outstanding):
@@ -193,7 +200,7 @@ def train_loop(learners, buffer, collector, args):
     num_learners = len(learners)
     while True:
         # print(ray.get(buffer.size.remote()))
-        if ray.get(buffer.size.remote()) >= args.batch_size:
+        if ray.get(buffer.size.remote()) >= args.batch_size * 2:
             trajs = ray.get(buffer.get_batch.remote(args.batch_size))
 
             split_size = len(trajs) // num_learners
@@ -234,6 +241,7 @@ def main():
     ap.add_argument("--clip", type=float, default=0.2)
     ap.add_argument("--gamma", type=float, default=0.99)
     ap.add_argument("--lam", type=float, default=0.95)
+    # ap.add_argument("--lr", type=float, default=1e-3)
     ap.add_argument("--lr", type=float, default=5e-6)
     ap.add_argument("--base_port", type=int, default=8000)
     ap.add_argument("--num_actors", type=int, default=3)
@@ -242,7 +250,7 @@ def main():
     ap.add_argument("--wandb", action="store_true") 
     ap.add_argument("--wandb_project_name", type=str, default="UnstableBaselines")
 
-    ap.add_argument("--max_buffer_size", type=int, default=1024)
+    ap.add_argument("--max_buffer_size", type=int, default=512) #4096)
     ap.add_argument("--use_all_data", action="store_true") # i.e. use prev checkpoint perspective as well
     ap.add_argument("--num_collection_workers", type=int, default=128)
     ap.add_argument("--max_env_steps", type=int, default=32)
@@ -278,6 +286,9 @@ def main():
     ap.add_argument("--huber_delta", type=float, default=1.0)
     ap.add_argument("--baseline_tau", type=float, default=0.01)
     
+
+    ap.add_argument("--normalize_rewards", type=bool, default=True)
+    ap.add_argument("--log_training_data", type=bool, default=True)
 
     args = ap.parse_args() 
 

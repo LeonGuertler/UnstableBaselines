@@ -29,23 +29,23 @@ class PPOLearner:
         self.model = AutoModelForCausalLM.from_pretrained(args.model_name, trust_remote_code=True, torch_dtype=torch.bfloat16).cuda()
         self.ref_model = AutoModelForCausalLM.from_pretrained(args.model_name, trust_remote_code=True, torch_dtype=torch.bfloat16).cuda().eval()
         for p in self.ref_model.parameters(): p.requires_grad = False # ensure no grads
-        self.critic = AutoModelForCausalLM.from_pretrained(args.model_name, trust_remote_code=True, torch_dtype=torch.bfloat16).cuda()
+        # self.critic = AutoModelForCausalLM.from_pretrained(args.model_name, trust_remote_code=True, torch_dtype=torch.bfloat16).cuda()
         self.tokenizer = AutoTokenizer.from_pretrained(args.model_name, trust_remote_code=True)
 
 
         self.actor_optimizer = torch.optim.AdamW(self.model.parameters(), lr=self.args.lr)
-        self.critic_optimizer = torch.optim.AdamW(self.critic.parameters(), lr=self.args.lr)
+        # self.critic_optimizer = torch.optim.AdamW(self.critic.parameters(), lr=self.args.lr)
 
         # gradient checkpointing
         if self.args.gradient_checkpointing:
             self.model.gradient_checkpointing_enable()
-            self.critic.gradient_checkpointing_enable()
+            # self.critic.gradient_checkpointing_enable()
 
         # bfloat16 training
         if self.args.bf16_training:
             self.model.to(torch.bfloat16)
             self.ref_model.to(torch.bfloat16)
-            self.critic.to(torch.bfloat16)
+            # self.critic.to(torch.bfloat16)
 
 
     def compute_gae(self, rewards, values, masks):
@@ -65,8 +65,6 @@ class PPOLearner:
 
 
     def update(self, steps: List):
-        # sort steps by size for more efficient mini-batching
-        # steps.sort(key=lambda s: len(self.tokenizer(s.obs + s.act, add_special_tokens=False)["input_ids"]))
 
         # extract from steps
         observations, actions, rewards = [], [], []
@@ -86,15 +84,15 @@ class PPOLearner:
 
         for _ in range(self.args.ppo_epochs):
             self.actor_optimizer.zero_grad(set_to_none=True)
-            self.critic_optimizer.zero_grad(set_to_none=True)
+            # self.critic_optimizer.zero_grad(set_to_none=True)
 
             mini_batch_size = len(steps) // self.args.gradient_accumulation_steps
 
             # for i in range(0, batch_size, mini_batch_size): # TODO for sure randomize order (maybe get list of idx first (still blocks) and randomly pick a block)
-            for mini_g_step in range(0, self.args.gradient_accumulation_steps):
-                mb_full_texts = full_texts[mini_g_step*mini_batch_size: (mini_g_step+1)*mini_batch_size]
-                mb_observations = observations[mini_g_step*mini_batch_size: (mini_g_step+1)*mini_batch_size]
-                mb_rewards = rewards[mini_g_step*mini_batch_size: (mini_g_step+1)*mini_batch_size]
+            for g_step in range(0, self.args.gradient_accumulation_steps):
+                mb_full_texts = full_texts[g_step*mini_batch_size: (g_step+1)*mini_batch_size]
+                mb_observations = observations[g_step*mini_batch_size: (g_step+1)*mini_batch_size]
+                mb_rewards = rewards[g_step*mini_batch_size: (g_step+1)*mini_batch_size]
 
 
                 mb_encodings = self.tokenizer(mb_full_texts, return_tensors="pt", padding=True, add_special_tokens=True).to("cuda")
@@ -108,55 +106,85 @@ class PPOLearner:
 
 
                 with torch.no_grad():
-                    # mb_logp_old = self.get_logps()
-                    # mb_logp_ref = 
-                    # mb_values = 
                     # Reference policy
+                    # ref_logits = self.ref_model(**mb_encodings).logits.float()
+                    # mb_logp_ref, shifted_mask = self.get_logps(ref_logits, mb_encodings.input_ids, mb_completion_mask)
                     ref_logits = self.ref_model(**mb_encodings).logits.float()
-                    mb_logp_ref, shifted_mb_completion_mask = self.get_logps(ref_logits, mb_encodings.input_ids, mb_completion_mask)
+                    mb_logp_ref, shifted_mask = self.get_logps(ref_logits, mb_encodings.input_ids, mb_completion_mask)
 
-                    # Value model
-                    value_logits = self.critic(**mb_encodings).logits.float()
-                    mb_values = value_logits[..., 0][:, :-1]
+                # mb_rewards = mb_rewards.unsqueeze(1).expand_as(shifted_mask) * shifted_mask
+                # mb_advantage_norm = (mb_rewards - mb_rewards.mean()) / (
+                #     mb_rewards.std() + 1e-8
+                # )
+                # sequence-level advantages
+                # mb_advantage = mb_rewards #(mb_rewards - mb_rewards.mean()) / (mb_rewards.std() + 1e-8)
+                # mb_advantage = mb_advantage.unsqueeze(1).expand_as(shifted_mask)
+                # mb_advantage = mb_advantage * shifted_mask
+                # eos_idx = shifted_mask.sum(dim=1) - 1               # (mini_batch_size,)
+
+                # # 2-b) create a dense advantage tensor initialised to 0
+                # mb_advantage = torch.zeros_like(shifted_mask, dtype=torch.float32)
+
+                # # 2-c) write the scalar reward into the EOS position only
+                # mb_advantage[torch.arange(mini_batch_size, device=shifted_mask.device), eos_idx] = (
+                #     mb_rewards                                               # (mini_batch_size,)
+                # )
+                eos_idx = shifted_mask.sum(dim=1) - 1               # (B,)
+                eos_mask = torch.zeros_like(shifted_mask, dtype=torch.bool)
+                eos_mask[torch.arange(mini_batch_size, device=shifted_mask.device), eos_idx] = True
+
+                mb_advantage = torch.zeros_like(shifted_mask, dtype=torch.float32)
+                mb_advantage[eos_mask] = mb_rewards        # (B,)
 
 
+
+
+                # print(f"mb_advantage: {mb_advantage}")
                 # build dense reward tensor
-                mb_dense_rewards = torch.zeros_like(mb_values)
-                mb_dense_rewards[:, -1] = mb_rewards # final token reward
-                mb_advantage, mb_rets = self.compute_gae(mb_dense_rewards, mb_values, shifted_mb_completion_mask) # calcualte the advantage
-                mb_advantage_norm = (mb_advantage - mb_advantage.mean()) / (mb_advantage.std()+1e-8) # normalize advantage
                 infos = {} # log dict
 
                 # get new log_p
                 model_outputs = self.model(**mb_encodings)
                 logits = model_outputs.logits.float()
-                mb_logp_new, _ = self.get_logps(logits, mb_encodings.input_ids, mb_completion_mask)
-                mb_ratio = torch.exp(mb_logp_new - mb_logp_ref)  # or logp_old
-                mb_clipped = torch.clamp(mb_ratio, 1 - self.args.clip, 1 + self.args.clip)
-                mb_pg_loss = torch.min(-mb_advantage * mb_ratio, -mb_advantage * mb_clipped)
-                mb_pg_loss = masked_mean(mb_pg_loss, shifted_mb_completion_mask)
+                mb_logp_new, _ = self.get_logps(logits,
+                                mb_encodings.input_ids,
+                                mb_completion_mask)
+                # ratio = torch.exp(mb_logp_new - mb_logp_ref)
+                ratio = torch.exp(mb_logp_new - mb_logp_ref)
+                clipped = torch.clamp(ratio, 1 - self.args.clip, 1 + self.args.clip)
 
-                # value loss
-                mb_value_pred = self.critic(mb_encodings.input_ids, attention_mask=mb_encodings.attention_mask).logits.float()[..., 0][:, :-1]
-                mb_v_clip = mb_values + torch.clamp(mb_value_pred - mb_values, -self.args.ppo_value_clip, self.args.ppo_value_clip)
-                mb_value_loss = 0.5 * torch.max((mb_value_pred - mb_rets)**2, (mb_v_clip - mb_rets)**2)
-                mb_value_loss = masked_mean(mb_value_loss, shifted_mb_completion_mask)
+                kl_token = (mb_logp_new - mb_logp_ref).detach()
+                kl_reward = -self.args.kl_penalty_coef * kl_token
+                mb_rewards = mb_rewards + kl_reward[eos_mask]
 
-                # KL loss
-                mb_kl_loss = torch.tensor(0., device="cuda")
-                if self.args.kl_penalty_coef != 0:
-                    mb_kl = (mb_logp_new - mb_logp_ref) * shifted_mb_completion_mask
-                    mb_kl_loss = mb_kl.mean()
+                # pg_loss = torch.min(-mb_advantage * ratio, -mb_advantage * clipped)
+                # pg_loss = masked_mean(pg_loss, shifted_mask)
 
-                mb_loss = mb_pg_loss + self.args.vf_coef * mb_value_loss + self.args.kl_penalty_coef * mb_kl_loss
-                mb_loss = mb_loss / self.args.gradient_accumulation_steps
-                mb_loss.backward()
+                # # optional KL penalty
+                # # kl_loss = torch.tensor(0., device="cuda")
+                # # if self.args.kl_penalty_coef != 0:
+                # #     kl_loss = masked_mean(mb_logp_new - mb_logp_ref, shifted_mask)
+                # kl_loss = masked_mean(mb_logp_new - mb_logp_ref, shifted_mask)
+                # pg_loss_tokens = torch.min(-mb_advantage * ratio, -mb_advantage * clipped)
+                # pg_loss = masked_mean(pg_loss_tokens, eos_mask)      # no dilution
+                pg_losses1 = -mb_advantage * ratio
+                pg_losses2 = -mb_advantage * clipped
+                pg_loss_tokens = torch.max(pg_losses1, pg_losses2)
+                pg_loss = masked_mean(pg_loss_tokens, eos_mask)
+                
+                kl_loss = masked_mean(mb_logp_new - mb_logp_ref, eos_mask)
 
-                if mini_g_step == self.args.gradient_accumulation_steps - 1:
+
+                print(f"KL-Loss: {kl_loss}, pg_loss: {pg_loss}")
+                loss = (pg_loss + self.args.kl_penalty_coef * kl_loss) / \
+                    self.args.gradient_accumulation_steps
+                loss.backward()
+
+                if g_step == self.args.gradient_accumulation_steps - 1:
                     torch.nn.utils.clip_grad_norm_(self.model.parameters(), self.args.gradient_clip)
-                    torch.nn.utils.clip_grad_norm_(self.critic.parameters(), self.args.gradient_clip)
+                    # torch.nn.utils.clip_grad_norm_(self.critic.parameters(), self.args.gradient_clip)
                     self.actor_optimizer.step()
-                    self.critic_optimizer.step()
+                    # self.critic_optimizer.step()
 
 
             # TODO update info dict
