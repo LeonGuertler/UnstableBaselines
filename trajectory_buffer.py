@@ -1,5 +1,6 @@
 import numpy as np
 import os, csv, ray, time, random, wandb
+from collections import deque
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Tuple
 
@@ -32,49 +33,13 @@ class StepBuffer:
         self.format_reward_think = args.format_reward_think
         self.format_reward_action = args.format_reward_action
         self.format_reward_order = args.format_reward_order
+        self.format_reward_invalid_move = args.format_reward_invalid_move
 
-        self.use_wandb = args.wandb 
-        if self.use_wandb: # initialize wandb
-            self.wandb_name = f"{args.model_name}-{args.train_env_id}-run-{int(time.time())}"
-            wandb.init(project=args.wandb_project_name, name=self.wandb_name, config=args)
-
-
-        self.episode_stats = {
-            "invalid_move_rate":0, "count":0, "raw_avg_current_ckpt_reward":0, "raw_avg_prev_ckpt_reward":0,
-            "current_checkpoint_win_rate":0, "current_checkpoint_loss_rate":0, "current_checkpoint_draw_rate":0,
-            "avg_current_ckpt_reward":0, "avg_prev_ckpt_reward":0,
-            "raw_avg_pid_0_current_ckpt_reward":0, "raw_avg_pid_1_current_ckpt_reward":0,
-            "avg_pid_0_current_ckpt_reward":0, "avg_pid_1_current_ckpt_reward":0, "num_turns": 0,
-            "rewards": []
-        }
-        self.turn_stats = {
-            "avg_response_length":0, "count":0, "pid_0_freq":0, "pid_1_freq":0,
-            "format_think":0, "format_answer":0, "format_order":0
-        }
+        self.output_dir_train = args.output_dir_train
+        # self.local_filename = args.local_filename
 
 
     def add_trajectory(self, trajectory: Trajectory, current_checkpoint_pid: Optional[int] = None):
-        self.episode_stats["count"] += 1
-
-        # check if invalid move
-        if list(trajectory.final_rewards.values()) in [[0,-1], [-1,0]]:
-            self.episode_stats["invalid_move_rate"] += 1
-
-        raw_current_ckpt_reward = trajectory.final_rewards[current_checkpoint_pid]
-        raw_prev_ckpt_reward = trajectory.final_rewards[1-current_checkpoint_pid]
-
-        self.episode_stats["raw_avg_current_ckpt_reward"] += raw_current_ckpt_reward
-        self.episode_stats["raw_avg_prev_ckpt_reward"] += raw_prev_ckpt_reward
-
-        if raw_current_ckpt_reward > raw_prev_ckpt_reward:
-            self.episode_stats["current_checkpoint_win_rate"] += 1
-        elif raw_current_ckpt_reward < raw_prev_ckpt_reward:
-            self.episode_stats["current_checkpoint_loss_rate"] += 1
-        else:
-            self.episode_stats["current_checkpoint_draw_rate"] += 1
-        self.episode_stats[f"raw_avg_pid_{current_checkpoint_pid}_current_ckpt_reward"] += raw_current_ckpt_reward
-
-
         # adjust the reward
         if self.reward_strategy in REWARD_TRANSFORMATIONS:
             transformed_rewards = REWARD_TRANSFORMATIONS[self.reward_strategy](raw_rewards=trajectory.final_rewards)
@@ -82,8 +47,8 @@ class StepBuffer:
             raise Exception(f"Unrecognized reward strategy: {self.reward_strategy}")
 
         # keep track of role advantage and normalize
-        self.role_advantage[0] = 0.95 * self.role_advantage[0] + 0.01*transformed_rewards[0]
-        self.role_advantage[1] = 0.95 * self.role_advantage[1] + 0.01*transformed_rewards[1]
+        self.role_advantage[0] = 0.99 * self.role_advantage[0] + 0.01*transformed_rewards[0]
+        self.role_advantage[1] = 0.99 * self.role_advantage[1] + 0.01*transformed_rewards[1]
 
         if self.normalize_role_advantage:
             transformed_rewards[0] = transformed_rewards[0] - self.role_advantage[0]
@@ -99,27 +64,12 @@ class StepBuffer:
                 reward += self.format_reward_answer
             if trajectory.format_feedbacks[i]["order_correct"]:
                 reward += self.format_reward_order
+            if trajectory.format_feedbacks[i]["invalid_move"]:
+                reward += self.format_reward_invalid_move
+            else:
+                reward -= self.format_reward_invalid_move
 
             self.steps.append(Step(pid=trajectory.pid[i], obs=trajectory.obs[i], act=trajectory.actions[i], reward=reward))
-
-            # print("outside if")
-            if trajectory.pid[i] == current_checkpoint_pid:
-                # print("inside if")
-                self.turn_stats["avg_response_length"] += len(trajectory.actions[i])
-                self.turn_stats[f"pid_{trajectory.pid[i]}_freq"] += 1
-                self.turn_stats["count"] += 1
-
-                # track format rewards
-                self.turn_stats["format_think"] += int(trajectory.format_feedbacks[i]["has_think"])
-                self.turn_stats["format_answer"] += int(trajectory.format_feedbacks[i]["has_answer"])
-                self.turn_stats["format_order"] += int(trajectory.format_feedbacks[i]["order_correct"])
-
-
-        self.episode_stats["avg_current_ckpt_reward"] += transformed_rewards[current_checkpoint_pid]
-        self.episode_stats["avg_prev_ckpt_reward"] += transformed_rewards[1-current_checkpoint_pid]
-        self.episode_stats[f"avg_pid_{current_checkpoint_pid}_current_ckpt_reward"] += transformed_rewards[current_checkpoint_pid]
-        self.episode_stats["num_turns"] += trajectory.num_turns
-        self.episode_stats["rewards"].extend(list(transformed_rewards.values()))
 
         print(f"BUFFER SIZE: {len(self.steps)}")
 
@@ -133,21 +83,18 @@ class StepBuffer:
             self.steps.remove(b)
 
 
-        if self.args.normalize_rewards:
-            # normalize the rewards
-            rewards = [step.reward for step in batch]
-            mean = np.mean(rewards)
-            std = np.std(rewards)
+        # if self.args.normalize_rewards:
+        # normalize the rewards
+        rewards = [step.reward for step in batch]
+        mean = np.mean(rewards)
+        std = np.std(rewards)
 
-            for step in batch:
-                step.reward = (step.reward-mean)/(std+1e-8)
+        for step in batch:
+            step.reward = (step.reward-mean)/(std+1e-8)
 
         if self.args.log_training_data:
-            if not os.path.exists(self.wandb_name):
-                os.makedirs(self.wandb_name)
-
             # store training data as csv file
-            csv_path = os.path.join(self.wandb_name, f"train_data_step_{self.training_steps}.csv")
+            csv_path = os.path.join(self.output_dir_train, f"train_data_step_{self.training_steps}.csv")
             with open(csv_path, mode='w', newline='', encoding='utf-8') as csvfile:
                 writer = csv.writer(csvfile)
                 writer.writerow(['pid', 'obs', 'act', 'reward'])  # header
@@ -165,96 +112,105 @@ class StepBuffer:
     def clear(self):
         self.steps.clear()
 
-    def log_training_info_to_wandb(self):
-        if self.use_wandb:
-            wandb_dict = {}
-            episode_stats = self.episode_stats.copy()
-            turn_stats = self.turn_stats.copy()
 
-            episode_count = episode_stats["count"] 
-            turn_count = turn_stats["count"] 
+@ray.remote
+class WandBTracker:
+    def __init__(self, args):
+        self.args = args 
+        self.tau = args.ema_tau
+        self.ma_range = args.ma_range
+        self.output_dir_eval = args.output_dir_eval
 
-            if episode_count == 0:
-                episode_count = 1
-            if turn_count == 0:
-                turn_count = 1
+        self.wandb_name = args.wandb_name 
+        wandb.init(project=args.wandb_project_name, name=self.wandb_name, config=args)
 
-            # calculate stats
-            avg_game_length = self.episode_stats["num_turns"] / episode_count
-            invalid_move_rate = self.episode_stats["invalid_move_rate"] / episode_count
-            raw_avg_current_ckpt_reward = self.episode_stats["raw_avg_current_ckpt_reward"] / episode_count
-            raw_avg_prev_ckpt_reward = self.episode_stats["raw_avg_prev_ckpt_reward"] / episode_count
-            current_checkpoint_win_rate = self.episode_stats["current_checkpoint_win_rate"] / episode_count
-            current_checkpoint_loss_rate = self.episode_stats["current_checkpoint_loss_rate"] / episode_count
-            current_checkpoint_draw_rate = self.episode_stats["current_checkpoint_draw_rate"] / episode_count
-            avg_current_ckpt_reward = self.episode_stats["avg_current_ckpt_reward"] / episode_count
-            avg_prev_ckpt_reward = self.episode_stats["avg_prev_ckpt_reward"] / episode_count
-            raw_avg_pid_0_current_ckpt_reward = self.episode_stats["raw_avg_pid_0_current_ckpt_reward"] / episode_count
-            raw_avg_pid_1_current_ckpt_reward = self.episode_stats["raw_avg_pid_1_current_ckpt_reward"] / episode_count
-            raw_avg_current_ckpt_reward_delta = raw_avg_pid_0_current_ckpt_reward - raw_avg_pid_1_current_ckpt_reward
-            avg_pid_0_current_ckpt_reward = self.episode_stats["avg_pid_0_current_ckpt_reward"] / episode_count
-            avg_pid_1_current_ckpt_reward = self.episode_stats["avg_pid_1_current_ckpt_reward"] / episode_count
-            avg_current_ckpt_reward_delta = avg_pid_0_current_ckpt_reward - avg_pid_1_current_ckpt_reward
+        # Metric containers
+        self.ema_metrics = {}
+        self.ma_metrics = {}
 
-            mean_reward = np.mean(self.episode_stats["rewards"])
-            std_reward = np.std(self.episode_stats["rewards"])
+        # Core counters
+        self.eval_ep_count = 0
+        self.num_trajectories = 0
 
+    def update_metric(self, name, value):
+        self.ema_metrics[name] = (1 - self.tau) * self.ema_metrics.get(name, 0.0) + self.tau * value # EMA
+        if name not in self.ma_metrics: # MA
+            self.ma_metrics[name] = deque(maxlen=self.ma_range) 
+        self.ma_metrics[name].append(value)
 
-            avg_response_chars = self.turn_stats["avg_response_length"] / turn_count
-            pid_0_frequency = self.turn_stats["pid_0_freq"] / turn_count
-            pid_1_frequency = self.turn_stats["pid_1_freq"] / turn_count
-            pid_freq_delta = pid_0_frequency - pid_1_frequency
-            correct_format_think_rate = self.turn_stats["format_think"] / turn_count
-            correct_format_answer_rate = self.turn_stats["format_answer"] / turn_count
-            correct_format_order_rate = self.turn_stats["format_order"] / turn_count
+    def log_metrics(self, prefix):
+        ema_tag = f"{prefix} (EMA - tau={self.tau})"
+        ma_tag  = f"{prefix} (MA - range={self.ma_range})"
+        wandb_dict = {}
 
+        for k in self.ema_metrics:
+            wandb_dict[f"{ema_tag}/{k}"] = self.ema_metrics[k]
+        for k in self.ma_metrics:
+            if self.ma_metrics[k]:
+                wandb_dict[f"{ma_tag}/{k}"] = sum(self.ma_metrics[k]) / len(self.ma_metrics[k])
 
-            wandb_dict["general/Game Length (avg)"] = avg_game_length
-            wandb_dict["general/Invalid Move Rate"] = invalid_move_rate
-            wandb_dict["general/Format Success Rate (Think)"] = correct_format_think_rate
-            wandb_dict["general/Current Checkpoint Win Rate"] = current_checkpoint_win_rate
-            wandb_dict["general/Current Checkpoint Loss Rate"] = current_checkpoint_loss_rate
-            wandb_dict["general/Current Checkpoint Draw Rate"] = current_checkpoint_draw_rate
+        # Special counts
+        if prefix == "eval":
+            wandb_dict[f"{ema_tag}/Num Games"] = self.eval_ep_count
+            wandb_dict[f"{ma_tag}/Num Games"] = self.eval_ep_count
+        elif prefix == "collection":
+            wandb_dict[f"{ema_tag}/Num Trajectories"] = self.num_trajectories
+            wandb_dict[f"{ma_tag}/Num Trajectories"] = self.num_trajectories
 
-            wandb_dict["rewards/Format Success Rate (Think)"] = correct_format_think_rate
-            wandb_dict["rewards/Format Success Rate (Answer)"] = correct_format_answer_rate
-            wandb_dict["rewards/Format Success Rate (Order)"] = correct_format_order_rate
+        wandb.log(wandb_dict)
 
-            wandb_dict["rewards/Raw Current Checkpoint Reward (avg)"] = raw_avg_current_ckpt_reward
-            wandb_dict["rewards/Raw Previous Checkpoint Reward (avg)"] = raw_avg_prev_ckpt_reward
-            wandb_dict["rewards/Raw Current Checkpoint Reward Delta (avg)"] = raw_avg_current_ckpt_reward_delta
-            wandb_dict["rewards/Current Checkpoint Reward (avg)"] = avg_current_ckpt_reward
-            wandb_dict["rewards/Previous Checkpoint Reward (avg)"] = avg_prev_ckpt_reward
-            wandb_dict["rewards/Current Checkpoint Reward Delta (avg)"] = avg_current_ckpt_reward_delta
+    def add_eval_episode(self, episode_info: list, final_reward: dict, current_ckpt_pid: int):
+        print("ADDING EVAL EPISODE")
+        reward_current = final_reward[current_ckpt_pid]
+        reward_other = final_reward[1 - current_ckpt_pid]
 
-            wandb_dict["rewards (by pid)/Player 0 - Raw Current Checkpoint Reward (avg)"] = raw_avg_pid_0_current_ckpt_reward
-            wandb_dict["rewards (by pid)/Player 1 - Raw Current Checkpoint Reward (avg)"] = raw_avg_pid_1_current_ckpt_reward
-            wandb_dict["rewards (by pid)/Raw Current Checkpoint Reward Delta (avg)"] = raw_avg_current_ckpt_reward_delta
-            wandb_dict["rewards (by pid)/Player 0 - Current Checkpoint Reward (avg)"] = avg_pid_0_current_ckpt_reward
-            wandb_dict["rewards (by pid)/Player 1 - Current Checkpoint Reward (avg)"] = avg_pid_1_current_ckpt_reward
-            wandb_dict["rewards (by pid)/Current Checkpoint Reward Delta (avg)"] = avg_current_ckpt_reward_delta
+        # Determine outcome
+        outcome_metric = "Draw Rate"
+        if reward_current > reward_other:
+            outcome_metric = "Win Rate"
+        elif reward_current < reward_other:
+            outcome_metric = "Loss Rate"
 
-            wandb_dict["general (by pid)/Player 0 Turn Frequency (avg)"] = pid_0_frequency
-            wandb_dict["general (by pid)/Player 1 Turn Frequency (avg)"] = pid_1_frequency
+        # Update outcome metrics
+        for metric in ["Win Rate", "Loss Rate", "Draw Rate"]:
+            self.update_metric(metric, int(metric == outcome_metric))
+        self.update_metric("Game Length", len(episode_info)) # Turn count
 
-            wandb_dict["general/Respone Length (avg char)"] = avg_response_chars
-            wandb_dict["general/Player Turn Frequency Delta (avg)"] = pid_freq_delta
-            wandb_dict["general/Buffer Size"] = len(self.steps)
-            wandb_dict["general/Training Steps"] = self.training_steps
-            wandb_dict["general/Training Samples"] = self.total_train_samples
-            wandb_dict["general/Mean Reward"] = mean_reward
-            wandb_dict["general/Std Reward"] = std_reward
+        # Save CSV
+        if episode_info:
+            filename = os.path.join(self.output_dir_eval, f"episode-{self.eval_ep_count}-{outcome_metric.split()[0].lower()}.csv")
+            with open(filename, mode='w', newline='', encoding='utf-8') as f:
+                writer = csv.DictWriter(f, fieldnames=list(episode_info[0].keys()))
+                writer.writeheader()
+                writer.writerows(episode_info)
+            try:
+                wandb.save(filename)
+            except Exception as exc:
+                print(f"Exception when pushing eval details to wandb: {exc}")
 
+        self.eval_ep_count += 1
+        self.log_metrics("eval")
 
-            wandb.log(wandb_dict)
-            self.episode_stats = {
-                "invalid_move_rate":0, "count":0, "raw_avg_current_ckpt_reward":0, "raw_avg_prev_ckpt_reward":0,
-                "current_checkpoint_win_rate":0, "current_checkpoint_loss_rate":0, "current_checkpoint_draw_rate":0,
-                "avg_current_ckpt_reward":0, "avg_prev_ckpt_reward":0,
-                "raw_avg_pid_0_current_ckpt_reward":0, "raw_avg_pid_1_current_ckpt_reward":0,
-                "avg_pid_0_current_ckpt_reward":0, "avg_pid_1_current_ckpt_reward":0, "num_turns": 0, "rewards": []
-            }
-            self.turn_stats = {
-                "avg_response_length":0, "count":0, "pid_0_freq":0, "pid_1_freq":0,
-                "format_think":0, "format_answer":0, "format_order":0
-            }
+    def add_trajectory(self, trajectory: Trajectory, current_checkpoint_pid: int):
+        raw_current = trajectory.final_rewards[current_checkpoint_pid]
+        raw_prev = trajectory.final_rewards[1 - current_checkpoint_pid]
+
+        # Outcome
+        self.update_metric("Win Rate",  int(raw_current > raw_prev))
+        self.update_metric("Loss Rate", int(raw_current < raw_prev))
+        self.update_metric("Draw Rate", int(raw_current == raw_prev))
+
+        # Invalid game
+        self.update_metric("Invalid Move Rate", int(list(trajectory.final_rewards.values()) in [[0,-1], [-1,0]]))
+
+        # Game structure
+        n_turns = len(trajectory.pid)
+        self.update_metric("Game Length", n_turns)
+
+        for i in range(n_turns):
+            self.update_metric("Format Success Rate", int(trajectory.format_feedbacks[i]["has_think"]))
+            self.update_metric("Format Invalid Move Rate", int(trajectory.format_feedbacks[i]["invalid_move"]))
+            self.update_metric("Response Length (avg char)", len(trajectory.actions[i]))
+
+        self.num_trajectories += 1
+        self.log_metrics("collection")
