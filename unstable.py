@@ -283,6 +283,10 @@ def main():
     ap.add_argument("--wandb", action="store_true") 
     ap.add_argument("--wandb_project_name", type=str, default="UnstableBaselines")
 
+    # tracking params
+    ap.add_argument("--ema_tau", type=float, default=0.01)
+    ap.add_argument("--ma_range", type=int, default=100)
+
 
     args = ap.parse_args() 
     args.max_buffer_size = args.batch_size*3
@@ -298,10 +302,6 @@ def main():
     args.output_dir_eval = os.path.join(args.run_folder, "eval_data")
     args.output_dir_checkpoints = os.path.join(args.run_folder, "checkpoints")
 
-
-    # tracking params
-    ap.add_argument("--ema_tau", type=float, default=0.01)
-    ap.add_argument("--ma_range", type=int, default=100)
 
     # build the reward transformations to be used
     final_reward_transformation = retra.ComposeFinalRewardTransforms([
@@ -349,5 +349,3 @@ def main():
 if __name__ == "__main__":
     main()
 
-
-# TODO at start, print num threads for collection and evaluation (and give estimate if cpu is enough)
