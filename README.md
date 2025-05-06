@@ -11,18 +11,28 @@
 <!-- - make sure to only submit the final action (i.e. add action extraction logic) -->
 <!-- - add format reward -->
 <!-- - add standard formatting options -->
+<!-- - add eval metrics to wandb -->
+<!-- - store sample CoTs -->
+<!-- - add a moving-average tracker and add tau/ma for both the wandb tracking -->
+<!-- - dynamically collect eval episodes in parallel -->
+
 
 
 - maybe dynamically adjust the number of gpus used for training/collection
 - add training metrics to wandb (the actual training metrics)
-- add eval metrics to wandb
 - store specific checkpoints
-- store sample CoTs
 
 - optionally allocate an evaluate GPU
 
-
 - track reward sd (echo trap)
+
+
+- fix multi-gpu training
+- maybe allow for uneven number of actor gpus
+
+
+
+
 
 KIV:
 - track time per complete episode

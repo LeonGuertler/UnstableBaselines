@@ -350,7 +350,4 @@ if __name__ == "__main__":
     main()
 
 
-# TODO fix multi-gpu training
-# TODO maybe allow for uneven num gpus to collect data
 # TODO at start, print num threads for collection and evaluation (and give estimate if cpu is enough)
-# TODO add a moving-average tracker and add tau/ma for both the wandb tracking
