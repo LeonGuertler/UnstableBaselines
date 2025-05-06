@@ -1,11 +1,14 @@
 import numpy as np
-import os, csv, ray, time, random, wandb
+import os, ray, random, wandb
 from collections import deque
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Tuple
 
-# from utils import REWARD_TRANSFORMATIONS
+# local imports
+from utils.local_files import write_eval_data_to_file, write_training_data_to_file
 from reward_transformations import ComposeFinalRewardTransforms, ComposeStepRewardTransforms, ComposeSamplingRewardTransforms
+
+
 
 @dataclass
 class Trajectory:
@@ -30,61 +33,17 @@ class StepBuffer:
         self.step_reward_transformation = step_reward_transformation
         self.sampling_reward_transformation = sampling_reward_transformation
 
-
-
-        # self.reward_strategy = args.reward_strategy
-        # self.normalize_role_advantage = args.normalize_role_advantage
-        # self.role_advantage = {0:0, 1:0}
-
         self.steps: List[Step] = []
-
-        self.training_steps = 0
-        self.total_train_samples = 0
-
-        # self.format_reward_think = args.format_reward_think
-        # self.format_reward_action = args.format_reward_action
-        # self.format_reward_order = args.format_reward_order
-        # self.format_reward_invalid_move = args.format_reward_invalid_move
-
-        self.output_dir_train = args.output_dir_train
+        self.training_steps = 0; self.total_train_samples = 0
 
 
     def add_trajectory(self, trajectory: Trajectory, current_checkpoint_pid: Optional[int] = None):
-        # # adjust the reward
-        # if self.reward_strategy in REWARD_TRANSFORMATIONS:
-        #     transformed_rewards = REWARD_TRANSFORMATIONS[self.reward_strategy](raw_rewards=trajectory.final_rewards)
-        # else:
-        #     raise Exception(f"Unrecognized reward strategy: {self.reward_strategy}")
-
-        # # keep track of role advantage and normalize
-        # self.role_advantage[0] = 0.99 * self.role_advantage[0] + 0.01*transformed_rewards[0]
-        # self.role_advantage[1] = 0.99 * self.role_advantage[1] + 0.01*transformed_rewards[1]
-
-        # if self.normalize_role_advantage:
-        #     transformed_rewards[0] = transformed_rewards[0] - self.role_advantage[0]
-        #     transformed_rewards[1] = transformed_rewards[1] - self.role_advantage[1]
-
-        
         trajectory.final_rewards = self.final_reward_transformation(trajectory.final_rewards) # apply final rewards transformations
         n = len(trajectory.pid)
         for i in range(n):
             reward = transformed_rewards[trajectory.pid[i]]
             step_reward = self.step_reward_transformation(trajectory=trajectory, step_index=i, base_reward=reward) # apply step reward transformations
             self.steps.append(Step(pid=trajectory.pid[i], obs=trajectory.obs[i], act=trajectory.actions[i], reward=step_reward))
-
-
-            # if trajectory.format_feedbacks[i]["has_think"]:
-            #     reward += self.format_reward_think
-            # if trajectory.format_feedbacks[i]["has_answer"]:
-            #     reward += self.format_reward_answer
-            # if trajectory.format_feedbacks[i]["order_correct"]:
-            #     reward += self.format_reward_order
-            # if trajectory.format_feedbacks[i]["invalid_move"]:
-            #     reward += self.format_reward_invalid_move
-            # else:
-            #     reward -= self.format_reward_invalid_move
-
-
         print(f"BUFFER SIZE: {len(self.steps)}")
 
         if len(self.steps) > self.args.max_buffer_size: # TODO randomly subsample
@@ -95,28 +54,11 @@ class StepBuffer:
         batch = random.sample(self.steps, batch_size)
         for b in batch:
             self.steps.remove(b)
+        batch = self.sampling_reward_transformation(batch) # apply sampling reward transformations
 
-        # apply sampling reward transformations
-        batch = self.sampling_reward_transformation(batch)
-
-
-        # if self.args.normalize_rewards:
-        # normalize the rewards
-        # rewards = [step.reward for step in batch]
-        # mean = np.mean(rewards)
-        # std = np.std(rewards)
-
-        # for step in batch:
-        #     step.reward = (step.reward-mean)/(std+1e-8)
-
-        if self.args.log_training_data:
-            # store training data as csv file
-            csv_path = os.path.join(self.output_dir_train, f"train_data_step_{self.training_steps}.csv")
-            with open(csv_path, mode='w', newline='', encoding='utf-8') as csvfile:
-                writer = csv.writer(csvfile)
-                writer.writerow(['pid', 'obs', 'act', 'reward'])  # header
-                for step in batch:
-                    writer.writerow([step.pid, step.obs, step.act, step.reward])
+        if self.args.log_training_data: # store training data as csv file
+            filename = os.path.join(self.args.output_dir_train, f"train_data_step_{self.training_steps}.csv")
+            write_training_data_to_file(batch=batch, filename=filename)
 
         # info for logging
         self.training_steps += 1
@@ -196,15 +138,11 @@ class WandBTracker:
         # Save CSV
         if episode_info:
             filename = os.path.join(self.output_dir_eval, f"episode-{self.eval_ep_count}-{outcome_metric.split()[0].lower()}.csv")
-            with open(filename, mode='w', newline='', encoding='utf-8') as f:
-                writer = csv.DictWriter(f, fieldnames=list(episode_info[0].keys()))
-                writer.writeheader()
-                writer.writerows(episode_info)
+            write_eval_data_to_file(episode_info=episode_info, filename=filename)
             try:
                 wandb.save(filename)
-            except Exception as exc:
-                print(f"Exception when pushing eval details to wandb: {exc}")
-
+    except Exception as exc:
+        print(f"Exception when pushing eval details to wandb: {exc}")
         self.eval_ep_count += 1
         self.log_metrics("eval")
 
