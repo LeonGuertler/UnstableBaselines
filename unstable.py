@@ -9,10 +9,14 @@ import textarena as ta
 # local imports
 from actors import VLLMActor
 from learners import PPOLearner, REACTORLearner, REINFORCELearner
+
 from trajectory_buffer import Trajectory, Step, StepBuffer, WandBTracker
-from prompt_action_templates import OBSERVATION_FORMATTING, ACTION_EXTRACTION
-from utils import validate_requested_gpus, average_weights, reserve_resources_for_learners
-from reward_transformations import *
+import reward_transformations as retra
+
+# import utils
+from utils.resources import validate_requested_gpus, reserve_resources_for_learners
+from utils.templates import OBSERVATION_FORMATTING, ACTION_EXTRACTION
+
 
 
 @ray.remote(num_gpus=1, num_cpus=1)
@@ -129,9 +133,6 @@ def run_eval_episode(player_id: int, env_id: str, tracker, actor):
     ray.get(tracker.add_eval_episode.remote(episode_info=episode_info, final_reward=env.close() if done else {0:0, 1:0}, current_ckpt_pid=player_id))
 
 
-
-
-
 # todo add logging for the number of train env eval currently running
 def start_actor_loop(args, collector, buffer, tracker):
     def clean_futures(futures):
@@ -165,7 +166,6 @@ def start_actor_loop(args, collector, buffer, tracker):
     threading.Thread(target=loop, daemon=True).start()
 
 
-
 # TODO won't work well as it is because optimizer states are not synced
 @ray.remote
 def train_loop(learners, buffer, collector, args):
@@ -196,6 +196,7 @@ def train_loop(learners, buffer, collector, args):
 
 
 def main():
+    # TODO clean up passed arguments
     ap = argparse.ArgumentParser()
     ap.add_argument("--model_name", default="Qwen/Qwen3-0.6B")
     ap.add_argument("--total_iters", type=int, default=50)
@@ -209,12 +210,14 @@ def main():
 
 
     # reward args
-    ap.add_argument("--normalize_role_advantage", action="store_true")
-    ap.add_argument("--reward_strategy", type=str, default="win-loss", choices=["win-loss", "raw"])
+    # ap.add_argument("--normalize_role_advantage", action="store_true")
+    # ap.add_argument("--reward_strategy", type=str, default="win-loss", choices=["win-loss", "raw"])
     ap.add_argument("--format_reward_think", type=float, default=0.25)
     ap.add_argument("--format_reward_action", type=float, default=0.1)
     ap.add_argument("--format_reward_order", type=float, default=0.1)
-    ap.add_argument("--format_reward_invalid_move", type=float, default=-1.0)
+
+    ap.add_argument("--format_reward_valid_move", type=float, default=1.0)
+    ap.add_argument("--format_penalty_invalid_move", type=float, default=-1.0)
 
 
     ap.add_argument("--gradient_accumulation_steps", type=int, default=64)
@@ -300,19 +303,41 @@ def main():
     ap.add_argument("--ema_tau", type=float, default=0.01)
     ap.add_argument("--ma_range", type=int, default=100)
 
+    # build the reward transformations to be used
+    final_reward_transformation = retra.ComposeFinalRewardTransforms([
+        retra.WinDrawLossFormatter(), # turn the rewards into (1,-1), (-1,1), (0,0)
+        retra.RoleAdvantageFormatter(), # normalize rewards for role advantage # TODO worth moving to step?
+    ])
+    step_reward_transformation = retra.ComposeStepRewardTransforms([
+        retra.RewardForThinkTags(reward=args.format_reward_think), # +0.25 for correct <think></think> tags
+        retra.PenaltyForInvalidMove(reward=args.format_reward_valid_move, penalty=args.format_penalty_invalid_move), 
+    ])
+    sampling_reward_transformation = retra.ComposeSamplingRewardTransforms([
+        NormalizeRewards() # normalize the sampled batch
+    ])
+
 
     # check whether the gpu counts are correct
     total_gpus, total_cpus = validate_requested_gpus(args=args)
     ray.init(num_gpus=total_gpus)
     pg = reserve_resources_for_learners(args.num_learners)
-    learners = [RayLearner.options(placement_group=pg, placement_group_bundle_index=i, num_cpus=2, num_gpus=1).remote(args=args) for i in range(args.num_learners)]
+    learners = [
+        RayLearner.options(placement_group=pg, placement_group_bundle_index=i, num_cpus=2, num_gpus=1).remote(args=args) 
+        for i in range(args.num_learners)
+    ]
 
-    buffer = StepBuffer.remote(args=args)
+    buffer = StepBuffer.remote(
+        args=args,
+        final_reward_transformation=final_reward_transformation,
+        step_reward_transformation=step_reward_transformation,
+        sampling_reward_transformation=sampling_reward_transformation
+    )
+
     tracker = WandBTracker.remote(args=args)
     collector = Collector(args=args)
     collector.initialize(num_actors=args.num_actors)
     start_eval_loop(args, tracker, collector)
-    start_collection_loop(args, collector, buffer, tracker) #, max_outstanding=total_cpus)
+    start_collection_loop(args, collector, buffer, tracker)
     train_loop.remote(learners, buffer, collector, args)
 
     try:
@@ -325,6 +350,7 @@ if __name__ == "__main__":
     main()
 
 
-
+# TODO fix multi-gpu training
+# TODO maybe allow for uneven num gpus to collect data
 # TODO at start, print num threads for collection and evaluation (and give estimate if cpu is enough)
 # TODO add a moving-average tracker and add tau/ma for both the wandb tracking

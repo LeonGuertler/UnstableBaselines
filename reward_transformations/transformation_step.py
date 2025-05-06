@@ -23,7 +23,7 @@ class ComposeStepRewardTransforms:
         return base_reward
 
 
-class RewardForThink(StepRewardTransform):
+class RewardForThinkTags(StepRewardTransform):
     def __init__(self, reward: float=0, penalty: float=0):
         self.reward = reward
         self.penalty = penalty
