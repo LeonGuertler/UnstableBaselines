@@ -141,8 +141,8 @@ class WandBTracker:
             write_eval_data_to_file(episode_info=episode_info, filename=filename)
             try:
                 wandb.save(filename)
-    except Exception as exc:
-        print(f"Exception when pushing eval details to wandb: {exc}")
+            except Exception as exc:
+                print(f"Exception when pushing eval details to wandb: {exc}")
         self.eval_ep_count += 1
         self.log_metrics("eval")
 
