@@ -4,8 +4,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import List, Dict, Optional, Tuple
 
-# from utils import REWARD_TRANSFORMATIONS
-from reward_transformations import ComposeFinalRewardTransforms, ComposeStepRewardTransforms, ComposeSamplingRewardTransforms
+from utils import REWARD_TRANSFORMATIONS
 
 @dataclass
 class Trajectory:
@@ -19,76 +18,62 @@ class Step:
 
 @ray.remote
 class StepBuffer:
-    def __init__(
-        self, args, 
-        final_reward_transformation: Optional[ComposeFinalRewardTransforms]=None,
-        step_reward_transformation: Optional[ComposeStepRewardTransforms]=None,
-        sampling_reward_transformation: Optional[ComposeSamplingRewardTransforms]=None
-    ):
+    def __init__(self, args):
         self.args = args
-        self.final_reward_transformation = final_reward_transformation
-        self.step_reward_transformation = step_reward_transformation
-        self.sampling_reward_transformation = sampling_reward_transformation
-
-
-
-        # self.reward_strategy = args.reward_strategy
-        # self.normalize_role_advantage = args.normalize_role_advantage
-        # self.role_advantage = {0:0, 1:0}
+        self.max_buffer_size = args.max_buffer_size
+        self.reward_strategy = args.reward_strategy
+        self.normalize_role_advantage = args.normalize_role_advantage
+        self.role_advantage = {0:0, 1:0}
 
         self.steps: List[Step] = []
 
         self.training_steps = 0
         self.total_train_samples = 0
 
-        # self.format_reward_think = args.format_reward_think
-        # self.format_reward_action = args.format_reward_action
-        # self.format_reward_order = args.format_reward_order
-        # self.format_reward_invalid_move = args.format_reward_invalid_move
+        self.format_reward_think = args.format_reward_think
+        self.format_reward_action = args.format_reward_action
+        self.format_reward_order = args.format_reward_order
+        self.format_reward_invalid_move = args.format_reward_invalid_move
 
         self.output_dir_train = args.output_dir_train
 
 
     def add_trajectory(self, trajectory: Trajectory, current_checkpoint_pid: Optional[int] = None):
-        # # adjust the reward
-        # if self.reward_strategy in REWARD_TRANSFORMATIONS:
-        #     transformed_rewards = REWARD_TRANSFORMATIONS[self.reward_strategy](raw_rewards=trajectory.final_rewards)
-        # else:
-        #     raise Exception(f"Unrecognized reward strategy: {self.reward_strategy}")
+        # adjust the reward
+        if self.reward_strategy in REWARD_TRANSFORMATIONS:
+            transformed_rewards = REWARD_TRANSFORMATIONS[self.reward_strategy](raw_rewards=trajectory.final_rewards)
+        else:
+            raise Exception(f"Unrecognized reward strategy: {self.reward_strategy}")
 
-        # # keep track of role advantage and normalize
-        # self.role_advantage[0] = 0.99 * self.role_advantage[0] + 0.01*transformed_rewards[0]
-        # self.role_advantage[1] = 0.99 * self.role_advantage[1] + 0.01*transformed_rewards[1]
+        # keep track of role advantage and normalize
+        self.role_advantage[0] = 0.99 * self.role_advantage[0] + 0.01*transformed_rewards[0]
+        self.role_advantage[1] = 0.99 * self.role_advantage[1] + 0.01*transformed_rewards[1]
 
-        # if self.normalize_role_advantage:
-        #     transformed_rewards[0] = transformed_rewards[0] - self.role_advantage[0]
-        #     transformed_rewards[1] = transformed_rewards[1] - self.role_advantage[1]
+        if self.normalize_role_advantage:
+            transformed_rewards[0] = transformed_rewards[0] - self.role_advantage[0]
+            transformed_rewards[1] = transformed_rewards[1] - self.role_advantage[1]
 
-        
-        trajectory.final_rewards = self.final_reward_transformation(trajectory.final_rewards) # apply final rewards transformations
         n = len(trajectory.pid)
         for i in range(n):
-            reward = transformed_rewards[trajectory.pid[i]]
-            step_reward = self.step_reward_transformation(trajectory=trajectory, step_index=i, base_reward=reward) # apply step reward transformations
-            self.steps.append(Step(pid=trajectory.pid[i], obs=trajectory.obs[i], act=trajectory.actions[i], reward=step_reward))
+            # add the format reward if necessary
+            reward = transformed_rewards.get(trajectory.pid[i], 0.0)
+            if trajectory.format_feedbacks[i]["has_think"]:
+                reward += self.format_reward_think
+            if trajectory.format_feedbacks[i]["has_answer"]:
+                reward += self.format_reward_answer
+            if trajectory.format_feedbacks[i]["order_correct"]:
+                reward += self.format_reward_order
+            if trajectory.format_feedbacks[i]["invalid_move"]:
+                reward += self.format_reward_invalid_move
+            else:
+                reward -= self.format_reward_invalid_move
 
-
-            # if trajectory.format_feedbacks[i]["has_think"]:
-            #     reward += self.format_reward_think
-            # if trajectory.format_feedbacks[i]["has_answer"]:
-            #     reward += self.format_reward_answer
-            # if trajectory.format_feedbacks[i]["order_correct"]:
-            #     reward += self.format_reward_order
-            # if trajectory.format_feedbacks[i]["invalid_move"]:
-            #     reward += self.format_reward_invalid_move
-            # else:
-            #     reward -= self.format_reward_invalid_move
-
+            self.steps.append(Step(pid=trajectory.pid[i], obs=trajectory.obs[i], act=trajectory.actions[i], reward=reward))
 
         print(f"BUFFER SIZE: {len(self.steps)}")
 
-        if len(self.steps) > self.args.max_buffer_size: # TODO randomly subsample
-            self.steps = self.steps[-self.args.max_buffer_size:]
+        if len(self.steps) > self.max_buffer_size:
+            self.steps = self.steps[-self.max_buffer_size:]
 
 
     def get_batch(self, batch_size: int) -> List[Step]:
@@ -96,18 +81,15 @@ class StepBuffer:
         for b in batch:
             self.steps.remove(b)
 
-        # apply sampling reward transformations
-        batch = self.sampling_reward_transformation(batch)
-
 
         # if self.args.normalize_rewards:
         # normalize the rewards
-        # rewards = [step.reward for step in batch]
-        # mean = np.mean(rewards)
-        # std = np.std(rewards)
+        rewards = [step.reward for step in batch]
+        mean = np.mean(rewards)
+        std = np.std(rewards)
 
-        # for step in batch:
-        #     step.reward = (step.reward-mean)/(std+1e-8)
+        for step in batch:
+            step.reward = (step.reward-mean)/(std+1e-8)
 
         if self.args.log_training_data:
             # store training data as csv file
