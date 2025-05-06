@@ -1,7 +1,7 @@
 import csv
 from typing import List
 
-def write_eval_data_to_file(episode_info, filename, wandb)
+def write_eval_data_to_file(episode_info, filename):
     with open(filename, mode='w', newline='', encoding='utf-8') as f:
         writer = csv.DictWriter(f, fieldnames=list(episode_info[0].keys()))
         writer.writeheader()

@@ -2,12 +2,10 @@ import numpy as np
 import os, ray, random, wandb
 from collections import deque
 from dataclasses import dataclass, field
-from typing import List, Dict, Optional, Tuple
+from typing import List, Dict, Optional, Tuple, Callable
 
 # local imports
 from utils.local_files import write_eval_data_to_file, write_training_data_to_file
-from reward_transformations import ComposeFinalRewardTransforms, ComposeStepRewardTransforms, ComposeSamplingRewardTransforms
-
 
 
 @dataclass
@@ -24,9 +22,9 @@ class Step:
 class StepBuffer:
     def __init__(
         self, args, 
-        final_reward_transformation: Optional[ComposeFinalRewardTransforms]=None,
-        step_reward_transformation: Optional[ComposeStepRewardTransforms]=None,
-        sampling_reward_transformation: Optional[ComposeSamplingRewardTransforms]=None
+        final_reward_transformation: Optional[Callable]=None,
+        step_reward_transformation: Optional[Callable]=None,
+        sampling_reward_transformation: Optional[Callable]=None
     ):
         self.args = args
         self.final_reward_transformation = final_reward_transformation
@@ -38,13 +36,13 @@ class StepBuffer:
 
 
     def add_trajectory(self, trajectory: Trajectory, current_checkpoint_pid: Optional[int] = None):
-        trajectory.final_rewards = self.final_reward_transformation(trajectory.final_rewards) # apply final rewards transformations
+        transformed_rewards = self.final_reward_transformation(trajectory.final_rewards) # apply final rewards transformations
         n = len(trajectory.pid)
         for i in range(n):
             reward = transformed_rewards[trajectory.pid[i]]
             step_reward = self.step_reward_transformation(trajectory=trajectory, step_index=i, base_reward=reward) # apply step reward transformations
             self.steps.append(Step(pid=trajectory.pid[i], obs=trajectory.obs[i], act=trajectory.actions[i], reward=step_reward))
-        print(f"BUFFER SIZE: {len(self.steps)}")
+        print(f"BUFFER SIZE: {len(self.steps)}, added {n} steps")
 
         if len(self.steps) > self.args.max_buffer_size: # TODO randomly subsample
             self.steps = self.steps[-self.args.max_buffer_size:]
@@ -78,7 +76,6 @@ class WandBTracker:
         self.args = args 
         self.tau = args.ema_tau
         self.ma_range = args.ma_range
-        self.output_dir_eval = args.output_dir_eval
 
         self.wandb_name = args.wandb_name 
         wandb.init(project=args.wandb_project_name, name=self.wandb_name, config=args)
@@ -119,7 +116,6 @@ class WandBTracker:
         wandb.log(wandb_dict)
 
     def add_eval_episode(self, episode_info: list, final_reward: dict, current_ckpt_pid: int):
-        print("ADDING EVAL EPISODE")
         reward_current = final_reward[current_ckpt_pid]
         reward_other = final_reward[1 - current_ckpt_pid]
 
@@ -136,15 +132,15 @@ class WandBTracker:
         self.update_metric("Game Length", len(episode_info)) # Turn count
 
         # Save CSV
+        self.log_metrics("eval")
         if episode_info:
-            filename = os.path.join(self.output_dir_eval, f"episode-{self.eval_ep_count}-{outcome_metric.split()[0].lower()}.csv")
+            filename = os.path.join(self.args.output_dir_eval, f"episode-{self.eval_ep_count}-{outcome_metric.split()[0].lower()}.csv")
             write_eval_data_to_file(episode_info=episode_info, filename=filename)
             try:
                 wandb.save(filename)
             except Exception as exc:
                 print(f"Exception when pushing eval details to wandb: {exc}")
         self.eval_ep_count += 1
-        self.log_metrics("eval")
 
     def add_trajectory(self, trajectory: Trajectory, current_checkpoint_pid: int):
         raw_current = trajectory.final_rewards[current_checkpoint_pid]

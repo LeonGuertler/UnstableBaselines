@@ -1,13 +1,6 @@
 from typing import Tuple, Dict
 
 
-OBSERVATION_FORMATTING = {
-    "default": apply_default_template
-}
-
-ACTION_EXTRACTION = {
-    "default": extract_action_and_format_feedback
-}
 
 
 def apply_default_template(observation: str) -> str:
@@ -29,3 +22,16 @@ def extract_action_and_format_feedback(raw_action: str) -> Tuple[str, Dict[str, 
 
     format_feedback = {"has_think": format_reward, "has_answer": False, "order_correct": False}
     return action, format_feedback
+
+
+
+
+
+
+OBSERVATION_FORMATTING = {
+    "default": apply_default_template
+}
+
+ACTION_EXTRACTION = {
+    "default": extract_action_and_format_feedback
+}

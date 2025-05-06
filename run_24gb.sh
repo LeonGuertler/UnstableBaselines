@@ -9,5 +9,6 @@ python3 unstable.py \
     --max_tokens 1024 \
     --gradient_checkpointing \
     --bf16_training \
-    --use_all_data
-
+    --use_all_data \
+    --num_collection_workers 256 \
+    --num_evaluation_workers 8

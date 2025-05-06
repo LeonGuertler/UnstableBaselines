@@ -4,7 +4,6 @@ import numpy as np
 from collections import deque
 
 
-
 class VLLMActor:
     def __init__(self, args):
         gpu_ids = ray.get_gpu_ids()

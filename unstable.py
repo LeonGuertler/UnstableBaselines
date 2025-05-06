@@ -39,8 +39,8 @@ class Collector:
 
     def initialize(self, num_actors: int):
         assert num_actors % 2 == 0, f"expected an even number of actors for play against prev checkpoint"
-        self.group_0 = [VLLMActor.remote(self.args) for _ in range(num_actors // 2)]
-        self.group_1 = [VLLMActor.remote(self.args) for _ in range(num_actors // 2)]
+        self.group_0 = [RayActor.remote(self.args) for _ in range(num_actors // 2)]
+        self.group_1 = [RayActor.remote(self.args) for _ in range(num_actors // 2)]
 
     def get_current_and_prev_client(self):
         # return two actors. One with the previous checkoint and one with the current one
@@ -56,31 +56,31 @@ class Collector:
 
 
 def make_env(env_id: str):
-    env = ta.make(args.train_env_id); env = ta.wrappers.FirstLastObservationWrapper(env)
+    env = ta.make(env_id); env = ta.wrappers.FirstLastObservationWrapper(env)
     env.reset(num_players=2); env.state.error_allowance = 0
     return env
 
 @ray.remote(num_cpus=0.1)
-def collect_episode_once(args, current_ckpt_player_id: int, env_id: str, buffer, tracker, actor1, actor2):
+def collect_episode_once(args, current_ckpt_player_id: int, buffer, tracker, actor1, actor2):
     env = make_env(env_id=args.train_env_id)
 
     traj = Trajectory()
     done, steps = False, 0
     actors = {current_ckpt_player_id: actor1, 1 - current_ckpt_player_id: actor2}
-
     while not done and steps < args.max_env_steps:
         pid, obs = env.get_observation()
         formatted_prompt = OBSERVATION_FORMATTING[args.observation_format_template](observation=obs)
         action = ray.get(actors[pid].submit_prompt.remote(formatted_prompt))
-
         # extract environment action
         extracted_action, format_feedback = ACTION_EXTRACTION[args.action_extraction_template](raw_action=action)
         done, _ = env.step(action=extracted_action)
-        if args.use_all_data or pid == current_ckpt_player_id:
-            traj.pid.append(pid)
-            traj.obs.append(formatted_prompt)
-            traj.actions.append(action)
-            traj.format_feedbacks.append(format_feedback)
+        # if args.use_all_data or pid == current_ckpt_player_id:
+
+        # add all data to trajectory (TODO perhaps give user a bit more control here)
+        traj.pid.append(pid)
+        traj.obs.append(formatted_prompt)
+        traj.actions.append(action)
+        traj.format_feedbacks.append(format_feedback)
         steps += 1
 
     traj.final_rewards = env.close() if done else {0: 0, 1: 0}
@@ -99,7 +99,7 @@ def collect_episode_once(args, current_ckpt_player_id: int, env_id: str, buffer,
 
 
 @ray.remote(num_cpus=0.1)
-def run_eval_episode(player_id: int, env_id: str, tracker, actor):
+def run_eval_episode(args, player_id: int, tracker, actor):
     env = make_env(env_id=args.eval_env_id)
 
     episode_info = []
@@ -163,7 +163,8 @@ def start_actor_loop(args, collector, buffer, tracker):
                 evaluation_outstanding.append(future)
 
             time.sleep(0.05)
-    threading.Thread(target=loop, daemon=True).start()
+    thread = threading.Thread(target=loop, daemon=True)
+    thread.start()
 
 
 # TODO won't work well as it is because optimizer states are not synced
@@ -181,7 +182,7 @@ def train_loop(learners, buffer, collector, args):
             update_futures = [learners[i].update.remote(batches[i]) for i in range(num_learners)]
             weights_list = ray.get(update_futures)
 
-            avg_weights = average_weights(weights_list)
+            avg_weights = weights_list[0] #average_weights(weights_list)
             collector.update_all_weights(avg_weights)
 
             if num_learners != 1:
@@ -294,13 +295,18 @@ def main():
     args.run_folder = os.path.join(args.output_dir, f"{datetime.now().strftime('%Y%m%d-%H:%M:%S')}-{args.model_name.replace('/', '-')}-{args.train_env_id}")
 
     # create necessary folders
-    os.makedir(args.output_dir, exist_ok=True)
-    os.makedir(args.run_folder, exist_ok=True)
+    os.makedirs(args.output_dir, exist_ok=True)
+    os.makedirs(args.run_folder, exist_ok=True)
 
     # create train/eval/checkpoint folders
     args.output_dir_train = os.path.join(args.run_folder, "training_data")
     args.output_dir_eval = os.path.join(args.run_folder, "eval_data")
     args.output_dir_checkpoints = os.path.join(args.run_folder, "checkpoints")
+
+    # create necessary folders
+    os.makedirs(args.output_dir_train, exist_ok=True)
+    os.makedirs(args.output_dir_eval, exist_ok=True)
+    os.makedirs(args.output_dir_checkpoints, exist_ok=True)
 
 
     # build the reward transformations to be used
@@ -313,13 +319,14 @@ def main():
         retra.PenaltyForInvalidMove(reward=args.format_reward_valid_move, penalty=args.format_penalty_invalid_move), 
     ])
     sampling_reward_transformation = retra.ComposeSamplingRewardTransforms([
-        NormalizeRewards() # normalize the sampled batch
+        retra.NormalizeRewards() # normalize the sampled batch
     ])
 
 
     # check whether the gpu counts are correct
     total_gpus, total_cpus = validate_requested_gpus(args=args)
     ray.init(num_gpus=total_gpus)
+
     pg = reserve_resources_for_learners(args.num_learners)
     learners = [
         RayLearner.options(placement_group=pg, placement_group_bundle_index=i, num_cpus=2, num_gpus=1).remote(args=args) 
@@ -336,8 +343,11 @@ def main():
     tracker = WandBTracker.remote(args=args)
     collector = Collector(args=args)
     collector.initialize(num_actors=args.num_actors)
-    start_eval_loop(args, tracker, collector)
-    start_collection_loop(args, collector, buffer, tracker)
+    
+    # start_eval_loop(args, tracker, collector)
+    # start_collection_loop(args, collector, buffer, tracker)
+    start_actor_loop(args=args, collector=collector, buffer=buffer, tracker=tracker)
+
     train_loop.remote(learners, buffer, collector, args)
 
     try:
@@ -349,3 +359,8 @@ def main():
 if __name__ == "__main__":
     main()
 
+
+
+# TODO add a single gpu debugging mode frfr
+# TODO assert as much as possible before running ray (i.e. OPENROUTER_API_KEY etc. etc. etc.)
+# TODO move the folder initialization into utils
