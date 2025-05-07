@@ -19,10 +19,16 @@ from utils.templates import OBSERVATION_FORMATTING, ACTION_EXTRACTION
 
 
 
-@ray.remote(num_gpus=1, num_cpus=1)
+@ray.remote#(num_gpus=1, num_cpus=1)
 class RayLearner(REINFORCELearner):
     def __init__(self, args):
+        gpu_ids = ray.get_gpu_ids()
+        os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, gpu_ids))
         super().__init__(args)
+        self.model = torch.nn.DataParallel(self.model, device_ids=list(range(gpu_ids)))
+        self.device = torch.device("cuda:0")
+        # TODO overwrite save/load for multi-gpu
+
 
 @ray.remote(num_gpus=1)
 class RayActor(VLLMActor):
@@ -169,31 +175,44 @@ def start_actor_loop(args, collector, buffer, tracker):
 
 # TODO won't work well as it is because optimizer states are not synced
 @ray.remote
-def train_loop(learners, buffer, collector, args):
-    num_learners = len(learners)
+def train_loop(learner, buffer, collector, args):
     while True:
         if ray.get(buffer.size.remote()) >= args.batch_size * 2:
-            trajs = ray.get(buffer.get_batch.remote(args.batch_size))
-            split_size = len(trajs) // num_learners
-
-            # split batch among learners
-            batches = [trajs[i*split_size : (i+1)*split_size] for i in range(num_learners - 1)]
-            batches.append(trajs[(num_learners - 1)*split_size:])  # remainder goes to last
-            update_futures = [learners[i].update.remote(batches[i]) for i in range(num_learners)]
-            weights_list = ray.get(update_futures)
-
-            avg_weights = weights_list[0] #average_weights(weights_list)
-            collector.update_all_weights(avg_weights)
-
-            if num_learners != 1:
-                weight_futures = [learner.update_weights.remote(avg_weights) for learner in learners]
-                ray.get(weight_futures) # Wait for all
-
-            print("✅ All updates + syncing done:", time.time())
-            avg_weights = None
-            print("Weights updated at", time.time())
+            steps = ray.get(buffer.get_batch.remote(args.batch_size)) # grab a batch
+            weights = ray.get(learner.update.remote(steps)) # one learner → one update call
+            collector.update_all_weights(weights) # push the fresh weights to the actors that generate data
+            print("✅ update + actor sync done :", time.time())
         else:
             time.sleep(0.5)
+
+
+
+# @ray.remote
+# def train_loop(learner, buffer, collector, args):
+#     num_learners = len(learners)
+#     while True:
+#         if ray.get(buffer.size.remote()) >= args.batch_size * 2:
+#             trajs = ray.get(buffer.get_batch.remote(args.batch_size))
+#             split_size = len(trajs) // num_learners
+
+#             # split batch among learners
+#             batches = [trajs[i*split_size : (i+1)*split_size] for i in range(num_learners - 1)]
+#             batches.append(trajs[(num_learners - 1)*split_size:])  # remainder goes to last
+#             update_futures = [learners[i].update.remote(batches[i]) for i in range(num_learners)]
+#             weights_list = ray.get(update_futures)
+
+#             avg_weights = weights_list[0] #average_weights(weights_list)
+#             collector.update_all_weights(avg_weights)
+
+#             if num_learners != 1:
+#                 weight_futures = [learner.update_weights.remote(avg_weights) for learner in learners]
+#                 ray.get(weight_futures) # Wait for all
+
+#             print("✅ All updates + syncing done:", time.time())
+#             avg_weights = None
+#             print("Weights updated at", time.time())
+#         else:
+#             time.sleep(0.5)
 
 
 def main():
@@ -327,11 +346,12 @@ def main():
     total_gpus, total_cpus = validate_requested_gpus(args=args)
     ray.init(num_gpus=total_gpus)
 
-    pg = reserve_resources_for_learners(args.num_learners)
-    learners = [
-        RayLearner.options(placement_group=pg, placement_group_bundle_index=i, num_cpus=2, num_gpus=1).remote(args=args) 
-        for i in range(args.num_learners)
-    ]
+    # pg = reserve_resources_for_learners(args.num_learners)
+    # learners = [
+    #     RayLearner.options(placement_group=pg, placement_group_bundle_index=i, num_cpus=2, num_gpus=1).remote(args=args) 
+    #     for i in range(args.num_learners)
+    # ]
+    learner = RayLearner.options(nm_gpus=args.num_learners, num_cpus=args.num_learners).remote(args=args)
 
     buffer = StepBuffer.remote(
         args=args,
@@ -344,11 +364,8 @@ def main():
     collector = Collector(args=args)
     collector.initialize(num_actors=args.num_actors)
     
-    # start_eval_loop(args, tracker, collector)
-    # start_collection_loop(args, collector, buffer, tracker)
     start_actor_loop(args=args, collector=collector, buffer=buffer, tracker=tracker)
-
-    train_loop.remote(learners, buffer, collector, args)
+    train_loop.remote(learner, buffer, collector, args)
 
     try:
         while True:

@@ -1,5 +1,9 @@
 # unstable-baselines
+(it's calles `unstable-baselines` becuase the maintained OpenAI baselines package is called `stable-baselines`)
 
+
+
+`bash run_24gb.sh` should work on 4090s (default is 2gpus for collection 1 for training) 
 
 # TODOs
 

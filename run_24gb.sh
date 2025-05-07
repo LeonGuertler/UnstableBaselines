@@ -3,12 +3,11 @@ python3 unstable.py \
     --wandb \
     --num_actors 2 \
     --num_learners 1 \
-    --num_collection_workers 512 \
-    --batch_size 64 \
-    --gradient_accumulation_steps 64 \
-    --max_tokens 1024 \
+    --batch_size 256 \
+    --gradient_accumulation_steps 256 \
+    --max_tokens 2048 \
     --gradient_checkpointing \
     --bf16_training \
     --use_all_data \
-    --num_collection_workers 256 \
+    --num_collection_workers 384 \
     --num_evaluation_workers 8
