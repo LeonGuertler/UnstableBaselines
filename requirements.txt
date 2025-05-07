@@ -1,6 +1,6 @@
 wandb
 vllm
-ray
+ray>=2.4.0
 ray[air]
 torch
 transformers

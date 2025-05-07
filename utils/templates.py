@@ -2,7 +2,6 @@ from typing import Tuple, Dict
 
 
 
-
 def apply_default_template(observation: str) -> str:
     return (
         f"A conversation between User and Assistant. You are playing a two-player zero-sum game. Make valid moves to win. "

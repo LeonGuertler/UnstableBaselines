@@ -1,11 +1,11 @@
-import os, re, gc, time, wandb
-import random, argparse, asyncio, threading
-import numpy as np 
+import os, time, random, argparse, threading
+import numpy as np
 from typing import List, Dict
 
 import ray, torch
 from ray.train.torch import TorchTrainer
 from ray.air.config import ScalingConfig
+from ray.air import RunConfig
 
 import textarena as ta
 
@@ -19,6 +19,7 @@ from trajectory_buffer import Trajectory, Step, StepBuffer, WandBTracker
 from utils.resources import validate_requested_gpus, reserve_resources_for_learners
 from utils.templates import OBSERVATION_FORMATTING, ACTION_EXTRACTION
 from utils.local_files import initialize_local_folder_structure
+from distributed_utils.callbacks import BroadcastWeightsCallback
 
 
 @ray.remote(num_gpus=1)
@@ -159,6 +160,7 @@ def iteratively_update_weights(trainer, collector):
     _last_broadcast_iter = 0
     def loop():
         while True:
+            # if _last_broadcast_iter != trainer.
             ckpt = trainer.get_latest_checkpoint() # Ray AIR Checkpoint
             if ckpt is None:
                 time.sleep(1); continue
@@ -189,6 +191,7 @@ def main():
     ap.add_argument("--gradient_clip", type=float, default=1.0)
 
     # reward design
+    ap.add_argument("--format_reward_think", type=float, default=0.25)
     ap.add_argument("--format_reward_valid_move", type=float, default=1.0)
     ap.add_argument("--format_penalty_invalid_move", type=float, default=-1.0)
 
@@ -254,14 +257,29 @@ def main():
 
     scaling_config=ScalingConfig(num_workers=args.num_learners, use_gpu=True, resources_per_worker={"CPU": 2})
     trainer = TorchTrainer(train_loop_per_worker=train_loop_per_worker, scaling_config=scaling_config, train_loop_config={"args": args, "buffer": buffer})
-    ray.remote(lambda: trainer.fit()).remote() # start training loop
+    # ray.remote(lambda: trainer.fit()).remote() # start training loop
 
     tracker = WandBTracker.remote(args=args)
     collector = Collector(args=args)
     collector.initialize(num_actors=args.num_actors)
     start_actor_loop(args=args, collector=collector, buffer=buffer, tracker=tracker)
 
-    iteratively_update_weights(trainer=trainer, collector=collector)
+
+    run_cfg = RunConfig(callbacks=[BroadcastWeightsCallback(collector)])
+
+    trainer = TorchTrainer(
+        train_loop_per_worker=train_loop_per_worker,
+        scaling_config=scaling_config,
+        run_config=run_cfg,
+        train_loop_config={"args": args, "buffer": buffer},
+    )
+
+    # Start training in a background thread so the driver can keep running.
+    threading.Thread(target=trainer.fit, daemon=True).start()
+
+
+
+    # iteratively_update_weights(trainer=trainer, collector=collector)
 
     try:
         while True:
