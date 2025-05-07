@@ -23,7 +23,10 @@
 
 
 - maybe dynamically adjust the number of gpus used for training/collection
-- add training metrics to wandb (the actual training metrics)
+- add training metrics to wandb (the actual training metrics) 
+        -> pass the tracker into the training loop?
+        -> maybe get the algo to return a dict of stuff worth tracking
+        
 - store specific checkpoints
 
 - optionally allocate an evaluate GPU
@@ -34,7 +37,7 @@
 - fix multi-gpu training
 - maybe allow for uneven number of actor gpus
 
-
+- split output dir by date, then time
 
 
 
@@ -44,8 +47,15 @@ KIV:
 - track time per generated char
 
 
+## General TODOs:
+- training and vllm inf with hot-swapped LoRA weights
+- sharding for both training and collection
+- single-gpu training
+- multi-node training
+
 
 
 # Ideas:
 - increase sample weight based on SD of reward 
 - somehow account for stochacisity in environment rewards (maybe somehow include reward certainty)
+- allow for uneven numbers of actors (maybe have the extra one focus on evals)

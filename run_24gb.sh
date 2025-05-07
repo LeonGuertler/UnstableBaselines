@@ -2,9 +2,9 @@ python3 unstable.py \
     --model_name "Qwen/Qwen3-0.6B" \
     --wandb \
     --num_actors 2 \
-    --num_learners 1 \
-    --batch_size 256 \
-    --gradient_accumulation_steps 256 \
+    --num_learners 2 \
+    --batch_size 16 \
+    --gradient_accumulation_steps 8 \
     --max_tokens 2048 \
     --gradient_checkpointing \
     --bf16_training \

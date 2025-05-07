@@ -26,6 +26,7 @@ class RayActor(VLLMActor):
     def __init__(self, args):
         super().__init__(args)
 
+
 class Collector:
     def __init__(self, args): 
         self.args = args
@@ -48,6 +49,7 @@ class Collector:
         current_group = self.group_0 if self.current_group_id == 0 else self.group_1
         ray.get([client.update_weights.remote(weights) for client in current_group])
         self.current_group_id = 1 - self.current_group_id  # flip roles
+
 
 def make_env(env_id: str):
     env = ta.make(env_id); env = ta.wrappers.FirstLastObservationWrapper(env)
@@ -119,8 +121,10 @@ def run_eval_episode(args, player_id: int, tracker, actor):
         }
         episode_info.append(step_info)
         steps += 1
+
     # store the full episode in a csv file
     ray.get(tracker.add_eval_episode.remote(episode_info=episode_info, final_reward=env.close() if done else {0:0, 1:0}, current_ckpt_pid=player_id))
+
 
 # todo add logging for the number of train env eval currently running
 def start_actor_loop(args, collector, buffer, tracker):
@@ -131,6 +135,7 @@ def start_actor_loop(args, collector, buffer, tracker):
     def loop():
         collection_outstanding = []
         evaluation_outstanding = []
+
         while True:
             # Clean up finished futures
             collection_outstanding = clean_futures(collection_outstanding)
@@ -157,11 +162,13 @@ def start_actor_loop(args, collector, buffer, tracker):
 
 def iteratively_update_weights(trainer, collector):
     _last_broadcast_iter = 0
+
     def loop():
         while True:
-            ckpt = trainer.get_latest_checkpoint() # Ray AIR Checkpoint
+            ckpt = trainer.get_latest_checkpoint()    # Ray AIR Checkpoint
             if ckpt is None:
-                time.sleep(1); continue
+                time.sleep(1)
+                continue
             data = ckpt.to_dict()
             it = data.get("iteration", None)
             if it is not None and it > _last_broadcast_iter:
@@ -169,7 +176,9 @@ def iteratively_update_weights(trainer, collector):
                 state_dict = data["model"] # only the model weights are needed
                 collector.update_all_weights(state_dict)
                 print(f"[push_weights] broadcast iteration {it}")
-            time.sleep(5) # poll interval
+
+
+            time.sleep(5)   # poll interval
     thread = threading.Thread(target=loop, daemon=True)
     thread.start()
 
@@ -178,19 +187,40 @@ def main():
     # TODO clean up passed arguments
     ap = argparse.ArgumentParser()
     ap.add_argument("--model_name", default="Qwen/Qwen3-0.6B")
+    ap.add_argument("--total_iters", type=int, default=5000000)
     ap.add_argument("--batch_size", type=int, default=512)
     ap.add_argument("--clip", type=float, default=0.2)
-    ap.add_argument("--lr", type=float, default=5e-6)
+    ap.add_argument("--gamma", type=float, default=0.99)
+    ap.add_argument("--lam", type=float, default=0.95)
 
-    # general configs
+    ap.add_argument("--lr", type=float, default=5e-6)
+    ap.add_argument("--base_port", type=int, default=8000)
+
+
+    # reward args
+    # ap.add_argument("--normalize_role_advantage", action="store_true")
+    # ap.add_argument("--reward_strategy", type=str, default="win-loss", choices=["win-loss", "raw"])
+    ap.add_argument("--format_reward_think", type=float, default=0.25)
+    ap.add_argument("--format_reward_action", type=float, default=0.1)
+    ap.add_argument("--format_reward_order", type=float, default=0.1)
+
+    ap.add_argument("--format_reward_valid_move", type=float, default=1.0)
+    ap.add_argument("--format_penalty_invalid_move", type=float, default=-1.0)
+
+
     ap.add_argument("--gradient_accumulation_steps", type=int, default=64)
     ap.add_argument("--gradient_checkpointing", action="store_true") 
     ap.add_argument("--bf16_training", action="store_true") 
+    ap.add_argument("--ppo_epochs", type=int, default=1)
+
+    ap.add_argument("--reward_scale", type=float, default=1.0)
+    ap.add_argument("--ppo_clip_lower", type=float, default=0.2)
+    ap.add_argument("--ppo_clip_upper", type=float, default=0.2)
+    ap.add_argument("--ppo_value_clip", type=float, default=0.2)
+    ap.add_argument("--vf_coef", type=float, default=1.0)
+    ap.add_argument("--kl_penalty_coef", type=float, default=0.01)
     ap.add_argument("--gradient_clip", type=float, default=1.0)
 
-    # reward design
-    ap.add_argument("--format_reward_valid_move", type=float, default=1.0)
-    ap.add_argument("--format_penalty_invalid_move", type=float, default=-1.0)
 
     # faster running vars
     ap.add_argument("--num_actors", type=int, default=3)
@@ -198,19 +228,37 @@ def main():
     ap.add_argument("--num_collection_workers", type=int, default=384)
     ap.add_argument("--num_evaluation_workers", type=int, default=4)
 
+
+    ap.add_argument("--observation_format_template", type=str, default="default")
+    ap.add_argument("--action_extraction_template", type=str, default="default")
+
+
     # collection params
     ap.add_argument("--train_env_id", default="TicTacToe-v0")
     ap.add_argument("--max_env_steps", type=int, default=32)
+    ap.add_argument("--use_all_data", action="store_true") # i.e. use prev checkpoint perspective as well
+
     ap.add_argument("--temperature", type=float, default=0.7)
     ap.add_argument("--top_p", type=float, default=0.95)
     ap.add_argument("--max_tokens", type=int, default=2048)
-    ap.add_argument("--observation_format_template", type=str, default="default")
-    ap.add_argument("--action_extraction_template", type=str, default="default")
+
 
     # eval params
     ap.add_argument("--eval_env_id", default="TicTacToe-v0")
     ap.add_argument("--max_env_steps_eval", type=int, default=64)
     ap.add_argument("--eval_model_name", type=str, default="google/gemini-2.0-flash-lite-001")
+
+
+
+    # REACTOR vars
+    ap.add_argument("--beta_js", type=float, default=0.1)
+    ap.add_argument("--ent_coef", type=float, default=0.001)
+    ap.add_argument("--sd_power", type=float, default=0.5)
+    ap.add_argument("--huber_delta", type=float, default=1.0)
+    ap.add_argument("--baseline_tau", type=float, default=0.01)
+    ap.add_argument("--normalize_rewards", type=bool, default=True)
+    
+
 
     # directory and local logging args 
     ap.add_argument("--output_dir", type=str, default="outputs/")
@@ -227,6 +275,8 @@ def main():
     args = ap.parse_args() 
     args.max_buffer_size = args.batch_size*3
     args = initialize_local_folder_structure(args=args)
+
+
 
     # build the reward transformations to be used
     final_reward_transformation = retra.ComposeFinalRewardTransforms([

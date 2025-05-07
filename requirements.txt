@@ -1,5 +1,6 @@
 wandb
 vllm
 ray
+ray[air]
 torch
 transformers
