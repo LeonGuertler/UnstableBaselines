@@ -77,8 +77,7 @@ class WandBTracker:
         self.tau = args.ema_tau
         self.ma_range = args.ma_range
 
-        self.wandb_name = args.wandb_name 
-        wandb.init(project=args.wandb_project_name, name=self.wandb_name, config=args)
+        wandb.init(project=args.wandb_project_name, name=args.wandb_name, config=args)
 
         # Metric containers
         self.ema_metrics = {}
@@ -87,6 +86,7 @@ class WandBTracker:
         # Core counters
         self.eval_ep_count = 0
         self.num_trajectories = 0
+
 
     def update_metric(self, name, value):
         self.ema_metrics[name] = (1 - self.tau) * self.ema_metrics.get(name, 0.0) + self.tau * value # EMA

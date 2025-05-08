@@ -22,6 +22,8 @@ from utils.local_files import initialize_local_folder_structure
 from distributed_utils.callbacks import BroadcastWeightsCallback
 
 
+import torch.distributed as dist
+
 @ray.remote(num_gpus=1)
 class RayActor(VLLMActor):
     def __init__(self, args):
@@ -29,16 +31,64 @@ class RayActor(VLLMActor):
 
 @ray.remote
 class Collector:
-    def __init__(self, args): 
+    def __init__(self, args):
         self.args = args
-        self.group_0: List[ray.actor.ActorHandle] = []
-        self.group_1: List[ray.actor.ActorHandle] = []
-        self.current_group_id = 0
+        self.group_0 = []
+        self.group_1 = []
+        self.current_group_id = 0        # 0 = group_0 is “current ckpt”
 
-    def initialize(self, num_actors: int):
-        assert num_actors % 2 == 0, f"expected an even number of actors for play against prev checkpoint"
-        self.group_0 = [RayActor.remote(self.args) for _ in range(num_actors // 2)]
-        self.group_1 = [RayActor.remote(self.args) for _ in range(num_actors // 2)]
+        # these will be filled by `initialize`
+        self.ranks_g0 = None
+        self.ranks_g1 = None
+        self.world    = None             # learner + all actors
+
+    # ------------------------------------------------------------------
+    # ONE-TIME bootstrap (called from driver)
+    # ------------------------------------------------------------------
+    def initialize(self, num_actors: int,
+                   master_addr: str = "127.0.0.1",
+                   master_port: str = "56789"):
+        """Launch actors and give them NCCL ranks.
+           Returns (ranks_g0, ranks_g1, world) so the learner can
+           build the two torch.distributed groups locally.
+        """
+        assert num_actors % 2 == 0, "need even #actors (current vs prev)"
+        n_per_group = num_actors // 2
+
+        # 1️⃣ launch actors -------------------------------------------------
+        self.group_0 = [RayActor.options(num_gpus=1).remote(self.args)
+                        for _ in range(n_per_group)]
+        self.group_1 = [RayActor.options(num_gpus=1).remote(self.args)
+                        for _ in range(n_per_group)]
+
+        # rank map: learner = 0, group_0 = 1..n0, group_1 = n0+1 .. n
+        ranks_g0 = [0] + list(range(1, 1 + n_per_group))
+        ranks_g1 = [0] + list(range(1 + n_per_group, 1 + 2 * n_per_group))
+        world     = 1 + 2 * n_per_group
+
+        # 2️⃣ tell each actor its global rank & world size ------------------
+        for r, actor in enumerate(self.group_0, start=1):
+            actor.init_process_group.remote(master_addr, master_port,
+                                            r, world,     # rank, world
+                                            "model_update", "nccl")
+
+        for r, actor in enumerate(self.group_1, start=1 + n_per_group):
+            actor.init_process_group.remote(master_addr, master_port,
+                                            r, world,
+                                            "model_update", "nccl")
+
+        # 3️⃣ store & return rank lists so learner can build sub-groups -----
+        self.ranks_g0, self.ranks_g1, self.world = ranks_g0, ranks_g1, world
+        return ranks_g0, ranks_g1, world
+
+    # ------------------------------------------------------------------
+    # helper getters used by learner thread
+    # ------------------------------------------------------------------
+    def get_current_group(self):
+        return self.group_0 if self.current_group_id == 0 else self.group_1
+
+    def flip(self):
+        self.current_group_id ^= 1
 
     def get_current_and_prev_client(self):
         # return two actors. One with the previous checkoint and one with the current one
@@ -55,6 +105,16 @@ class Collector:
             client.update_weights.remote(weights_ref)
 
         self.current_group_id = 1 - self.current_group_id  # flip roles
+
+    def get_current_group(self):
+        return self.group_0 if self.current_group_id == 0 else self.group_1
+
+    def get_current_pg(self):
+        return self.pg_g0 if self.current_group_id == 0 else self.pg_g1
+
+    def flip(self):
+        self.current_group_id ^= 1
+
 
 def make_env(env_id: str):
     env = ta.make(env_id); env = ta.wrappers.FirstLastObservationWrapper(env)
@@ -269,7 +329,39 @@ def main():
 
     tracker = WandBTracker.remote(args=args)
     collector = Collector.remote(args=args)
+
+    ranks_g0, ranks_g1, world = ray.get(
+        collector.initialize.remote(num_actors=args.num_actors)
+    )
+
+    # --- learner (rank-0) process-group setup ----------------------------
+    import torch.distributed as dist
+    dist.init_process_group("nccl", rank=0, world_size=world)
+    pg_g0 = dist.new_group(ranks=ranks_g0, backend="nccl")
+    pg_g1 = dist.new_group(ranks=ranks_g1, backend="nccl")
+
+    # pass `pg_g0`, `pg_g1` handles (or rank lists) to the learner
+    train_cfg = dict(args=args,
+                    buffer=buffer,
+                    collector=collector,
+                    pg_g0=pg_g0,
+                    pg_g1=pg_g1)
+                    
     ray.get(collector.initialize.remote(num_actors=args.num_actors))
+
+
+    # # driver.py  (after actors = [VLLMActor.remote(...)] is created)
+    # master = os.environ["MASTER_ADDR"] = "127.0.0.1"
+    # port   = os.environ["MASTER_PORT"] = "56789"
+    # world  = 1 + len(actors)           # rank-0 learner + N actors
+
+    # # learner rank-0 side
+    # dist.init_process_group("nccl", rank=0, world_size=world)
+    # for i, actor in enumerate(actors, start=1):
+    #     actor.init_process_group.remote(master, port, i, world, "model_update", "nccl")
+
+
+
     start_actor_loop(args=args, collector=collector, buffer=buffer, tracker=tracker)
 
 
@@ -279,7 +371,7 @@ def main():
         train_loop_per_worker=train_loop_per_worker,
         scaling_config=scaling_config,
         # run_config=run_cfg,
-        train_loop_config={"args": args, "buffer": buffer, "collector": collector},
+        train_loop_config=train_cfg #{"args": args, "buffer": buffer, "collector": collector},
     )
 
     # Start training in a background thread so the driver can keep running.
