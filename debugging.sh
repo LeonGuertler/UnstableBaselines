@@ -4,8 +4,8 @@ python3 unstable.py \
     --num_actors 2 \
     --num_learners 1 \
     --lr 1e-5 \
-    --batch_size 128 \
-    --gradient_accumulation_steps 128 \
+    --batch_size 32 \
+    --gradient_accumulation_steps 32 \
     --max_tokens 512 \
     --gradient_checkpointing \
     --bf16_training \

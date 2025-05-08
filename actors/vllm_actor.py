@@ -41,17 +41,54 @@ class VLLMActor:
                 for fut in futures:
                     fut.set_exception(e)
 
-    def update_weights(self, weights: dict):
-        print("\n\nUPDATING ACTOR WEIGHTS")
+    # async def update_weights(self, weights_ref):
+    #     # This yields control while the data is transferred
+    #     weights = await weights_ref           # <- await, NOT ray.get
+
+    #     print("\n\nUPDATING ACTOR WEIGHTS")
+    #     t0 = time.time()
+    #     with self.lock, torch.no_grad():
+    #         model = (self.llm.llm_engine.model_executor
+    #                                .driver_worker.worker.get_model())
+    #         device = next(model.parameters()).device
+    #         for k, w in weights.items():
+    #             if k in model.state_dict() and model.state_dict()[k].shape == w.shape:
+    #                 model.state_dict()[k].copy_(
+    #                     torch.from_numpy(w).to(device, non_blocking=True))
+    #     print(f"Finished updating weights in {time.time() - t0:.2f}s\n")
+
+
+    # def update_weights(self, weights_ref):
+    #     print("\n\nUPDATING ACTOR WEIGHTS")
+    #     t0 = time.time()
+    #     weights = ray.get(weights_ref)
+    #     with self.lock:
+    #         with torch.no_grad():
+    #             executor = self.llm.llm_engine.model_executor
+    #             model = executor.driver_worker.worker.get_model()
+    #             device = next(model.parameters()).device
+    #             state_dict = model.state_dict()
+    #             for k in weights:
+    #                 if k in state_dict and state_dict[k].shape == weights[k].shape:
+    #                     tensor = torch.from_numpy(weights[k].copy()).to(device)
+    #                     state_dict[k].copy_(tensor)
+    #     print(f"Finished updating weights in {time.time()-t0} seconds.\n\n")
+
+
+    def update_weights(self, weights):          # <-- rename, it's a dict now
+        print("\nUPDATING ACTOR WEIGHTS")
         t0 = time.time()
-        with self.lock:
-            with torch.no_grad():
-                executor = self.llm.llm_engine.model_executor
-                model = executor.driver_worker.worker.get_model()
-                device = next(model.parameters()).device
-                state_dict = model.state_dict()
-                for k in weights:
-                    if k in state_dict and state_dict[k].shape == weights[k].shape:
-                        tensor = torch.from_numpy(weights[k].copy()).to(device)
-                        state_dict[k].copy_(tensor)
-        print(f"Finished updating weights in {time.time()-t0} seconds.\n\n")
+
+        with self.lock, torch.no_grad():
+            model = (self.llm.llm_engine
+                        .model_executor
+                        .driver_worker.worker.get_model())
+            device = next(model.parameters()).device
+            state_dict = model.state_dict()
+
+            for k, w in weights.items():
+                if k in state_dict and state_dict[k].shape == w.shape:
+                    tensor = torch.from_numpy(w).to(device, non_blocking=True)
+                    state_dict[k].copy_(tensor)
+
+        print(f"Finished updating weights in {time.time() - t0:.2f}s\n")

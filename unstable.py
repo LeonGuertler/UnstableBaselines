@@ -27,6 +27,7 @@ class RayActor(VLLMActor):
     def __init__(self, args):
         super().__init__(args)
 
+@ray.remote
 class Collector:
     def __init__(self, args): 
         self.args = args
@@ -45,9 +46,14 @@ class Collector:
         prev_group = self.group_1 if self.current_group_id == 0 else self.group_0
         return random.choice(current_group), random.choice(prev_group)
 
-    def update_all_weights(self, weights: Dict):
+    def update_all_weights(self, weights_ref):
+        print("[collector] type(weights_ref):", type(weights_ref))
+
         current_group = self.group_0 if self.current_group_id == 0 else self.group_1
-        ray.get([client.update_weights.remote(weights) for client in current_group])
+        # ray.get([client.update_weights.remote(weights_ref) for client in current_group])
+        for client in current_group:
+            client.update_weights.remote(weights_ref)
+
         self.current_group_id = 1 - self.current_group_id  # flip roles
 
 def make_env(env_id: str):
@@ -139,14 +145,16 @@ def start_actor_loop(args, collector, buffer, tracker):
 
             # Replenish collection
             if len(collection_outstanding) < args.num_collection_workers:
-                a1, a2 = collector.get_current_and_prev_client()
+                # a1, a2 = collector.get_current_and_prev_client()
+                a1, a2 = ray.get(collector.get_current_and_prev_client.remote())
                 player_id = int(np.random.uniform()<0.5)
                 future = collect_episode_once.remote(args=args, current_ckpt_player_id=player_id, buffer=buffer, tracker=tracker, actor1=a1, actor2=a2)
                 collection_outstanding.append(future)
 
             # Replenish evaluation
             if len(evaluation_outstanding) < args.num_evaluation_workers:
-                a1, _ = collector.get_current_and_prev_client()
+                # a1, _ = collector.get_current_and_prev_client()
+                a1, _ = ray.get(collector.get_current_and_prev_client.remote())
                 player_id = int(np.random.uniform()<0.5)
                 future = run_eval_episode.remote(args=args, player_id=player_id, tracker=tracker, actor=a1)
                 evaluation_outstanding.append(future)
@@ -156,24 +164,24 @@ def start_actor_loop(args, collector, buffer, tracker):
     thread.start()
 
 
-def iteratively_update_weights(trainer, collector):
-    _last_broadcast_iter = 0
-    def loop():
-        while True:
-            # if _last_broadcast_iter != trainer.
-            ckpt = trainer.get_latest_checkpoint() # Ray AIR Checkpoint
-            if ckpt is None:
-                time.sleep(1); continue
-            data = ckpt.to_dict()
-            it = data.get("iteration", None)
-            if it is not None and it > _last_broadcast_iter:
-                _last_broadcast_iter = it
-                state_dict = data["model"] # only the model weights are needed
-                collector.update_all_weights(state_dict)
-                print(f"[push_weights] broadcast iteration {it}")
-            time.sleep(5) # poll interval
-    thread = threading.Thread(target=loop, daemon=True)
-    thread.start()
+# def iteratively_update_weights(trainer, collector):
+#     _last_broadcast_iter = 0
+#     def loop():
+#         while True:
+#             # if _last_broadcast_iter != trainer.
+#             ckpt = trainer.get_latest_checkpoint() # Ray AIR Checkpoint
+#             if ckpt is None:
+#                 time.sleep(1); continue
+#             data = ckpt.to_dict()
+#             it = data.get("iteration", None)
+#             if it is not None and it > _last_broadcast_iter:
+#                 _last_broadcast_iter = it
+#                 state_dict = data["model"] # only the model weights are needed
+#                 collector.update_all_weights.remote(state_dict)
+#                 print(f"[push_weights] broadcast iteration {it}")
+#             time.sleep(5) # poll interval
+#     thread = threading.Thread(target=loop, daemon=True)
+#     thread.start()
 
 
 def main():
@@ -260,18 +268,18 @@ def main():
     # ray.remote(lambda: trainer.fit()).remote() # start training loop
 
     tracker = WandBTracker.remote(args=args)
-    collector = Collector(args=args)
-    collector.initialize(num_actors=args.num_actors)
+    collector = Collector.remote(args=args)
+    ray.get(collector.initialize.remote(num_actors=args.num_actors))
     start_actor_loop(args=args, collector=collector, buffer=buffer, tracker=tracker)
 
 
-    run_cfg = RunConfig(callbacks=[BroadcastWeightsCallback(collector)])
+    # run_cfg = RunConfig(callbacks=[BroadcastWeightsCallback(collector)])
 
     trainer = TorchTrainer(
         train_loop_per_worker=train_loop_per_worker,
         scaling_config=scaling_config,
-        run_config=run_cfg,
-        train_loop_config={"args": args, "buffer": buffer},
+        # run_config=run_cfg,
+        train_loop_config={"args": args, "buffer": buffer, "collector": collector},
     )
 
     # Start training in a background thread so the driver can keep running.

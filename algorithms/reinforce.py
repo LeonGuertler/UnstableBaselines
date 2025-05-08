@@ -22,5 +22,22 @@ class Reinforce(BaseAlgo):
         seq_logp = (tok_logp * mask).sum(1) / mask.sum(1).clamp(min=1)
         loss = -(advs * seq_logp).mean()
         loss.backward()
-        return loss.item()
+        # update_info_dict = {
+        #     "loss": loss.item(),
+        #     "adv_mean": advs.mean().item(),
+        #     "adv_std": advs.std().item(),
+        #     "logp_mean": seq_logp.mean().item(),
+        #     "logp_std": seq_logp.std().item(),
+        #     "grad_norm": self.get_grad_norm(),  # Optional: requires implementing `get_grad_norm`
+        #     "lr": self.optimizer.param_groups[0]["lr"] if hasattr(self, "optimizer") else None,
+        # }
+
+        # return loss.item(), update_info_dict
+
+        return {
+            "loss": loss.item(),
+            "logp_mean": seq_logp.mean().item(),
+            "logp_std": seq_logp.std().item(),
+            "num_steps": len(steps),
+        }
 

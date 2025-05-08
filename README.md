@@ -48,7 +48,7 @@ KIV:
 
 
 ## General TODOs:
-- training and vllm inf with hot-swapped LoRA weights
+- training and vllm inf with hot-swapped LoRA weights (https://docs.vllm.ai/en/stable/features/lora.html -> doesn't seem hard and given the recent papers on this super worth doing)
 - sharding for both training and collection
 - single-gpu training
 - multi-node training
