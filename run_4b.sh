@@ -1,5 +1,5 @@
 python3 unstable.py \
-    --model_name "Qwen/Qwen3-0.6B" \
+    --model_name "Qwen/Qwen3-4B" \
     --wandb \
     --num_actors 2 \
     --num_learners 1 \
