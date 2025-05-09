@@ -129,7 +129,7 @@ def run_eval_episode(args, player_id: int, tracker, actor, collector):
             formatted_prompt = OBSERVATION_FORMATTING[args.observation_format_template](observation=obs)
             lora_path = ray.get(collector.get_current_lora.remote())
             raw_action = ray.get(agent.submit_prompt.remote(prompt=formatted_prompt, lora_path=lora_path))
-            action, format_feedback = ACTION_EXTRACTION[args.action_extraction_template](raw_action=action)
+            action, format_feedback = ACTION_EXTRACTION[args.action_extraction_template](raw_action=raw_action)
         
         done, info = env.step(action=action) # submit to env
         step_info = {
