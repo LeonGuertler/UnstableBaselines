@@ -92,7 +92,7 @@ class WandBTracker:
         self.num_trajectories = 0
 
     def update_metric(self, name, value, prefix):
-        if prefix == "collection:"
+        if prefix == "collection":
             self.ema_metrics[name] = (1 - self.tau) * self.ema_metrics.get(name, 0.0) + self.tau * value # EMA
             if name not in self.ma_metrics: # MA
                 self.ma_metrics[name] = deque(maxlen=self.ma_range) 
