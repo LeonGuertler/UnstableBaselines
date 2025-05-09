@@ -36,6 +36,7 @@ class StepBuffer:
 
 
     def add_trajectory(self, trajectory: Trajectory, current_checkpoint_pid: Optional[int] = None):
+        # print(f"trying to add episode to buffer")
         transformed_rewards = self.final_reward_transformation(trajectory.final_rewards) # apply final rewards transformations
         n = len(trajectory.pid)
         for i in range(n):

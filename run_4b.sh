@@ -1,13 +1,13 @@
 python3 unstable.py \
-    --model_name "Qwen/Qwen3-4B" \
+    --model_name "Qwen/Qwen3-0.6B" \
     --wandb \
     --num_actors 2 \
     --num_learners 1 \
     --lr 1e-5 \
-    --batch_size 128 \
-    --gradient_accumulation_steps 128 \
-    --max_tokens 512 \
+    --batch_size 256 \
+    --gradient_accumulation_steps 256 \
+    --max_tokens 4096 \
     --gradient_checkpointing \
     --bf16_training \
-    --num_collection_workers 384 \
+    --num_collection_workers 512 \
     --num_evaluation_workers 8

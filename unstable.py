@@ -31,46 +31,88 @@ class RayActor(VLLMActor):
 class Collector:
     def __init__(self, args): 
         self.args = args
-        self.group_0: List[ray.actor.ActorHandle] = []
-        self.group_1: List[ray.actor.ActorHandle] = []
+        self.p0_lora_path: Optional[str] = None
+        self.p1_lora_path: Optional[str] = None
+
+        self.actor_group: List[ray.actor.ActorHandle] = []
+        # self.actor_group = List[ray.actor.ActorHandle] = []
         self.current_group_id = 0
 
     def initialize(self, num_actors: int):
-        assert num_actors % 2 == 0, f"expected an even number of actors for play against prev checkpoint"
-        self.group_0 = [RayActor.remote(self.args) for _ in range(num_actors // 2)]
-        self.group_1 = [RayActor.remote(self.args) for _ in range(num_actors // 2)]
+        self.actor_group = [RayActor.remote(self.args) for _ in range(num_actors)]
 
-    def get_current_and_prev_client(self):
-        # return two actors. One with the previous checkoint and one with the current one
-        current_group = self.group_0 if self.current_group_id == 0 else self.group_1
-        prev_group = self.group_1 if self.current_group_id == 0 else self.group_0
-        return random.choice(current_group), random.choice(prev_group)
+    def get_lora_paths_and_actor(self):
+        # return (current, previous) plus an actor
+        if self.current_group_id == 0:
+            current, prev = self.p0_lora_path, self.p1_lora_path
+        else:
+            current, prev = self.p1_lora_path, self.p0_lora_path
+        return (current, prev), random.choice(self.actor_group)
 
-    def update_all_weights(self, weights_ref):
-        print("[collector] type(weights_ref):", type(weights_ref))
+    def set_new_lora_paths(self, new_path: str):
+        """
+        Called by the trainer on each checkpoint.
+        We write new_path into whichever slot is 'next'
+        and then flip current_group_id.
+        """
+        if self.current_group_id == 0:
+            # next time, p1 becomes current
+            self.p1_lora_path = new_path
+            self.current_group_id = 1
+        else:
+            self.p0_lora_path = new_path
+            self.current_group_id = 0
+        # swap roles
+        # self.current_group_id = 1 - self.current_group_id
 
-        current_group = self.group_0 if self.current_group_id == 0 else self.group_1
-        # ray.get([client.update_weights.remote(weights_ref) for client in current_group])
-        for client in current_group:
-            client.update_weights.remote(weights_ref)
+    # def get_lora_paths_and_actor(sefl):
+    #     lora_paths = (self.p0_lora_path, self.p1_lora_path) if self.current_group_id==0 else  (self.p1_lora_path, self.p0_lora_path)
+    #     return lora_paths, random.choice(self.actor_group)
 
-        self.current_group_id = 1 - self.current_group_id  # flip roles
+    # def set_new_lora_paths(self):
+    #     pass # TODO
+
+
+
+
+    # def get_current_and_prev_client(self):
+    #     # return two actors. One with the previous checkoint and one with the current one
+    #     current_group = self.group_0 if self.current_group_id == 0 else self.group_1
+    #     prev_group = self.group_1 if self.current_group_id == 0 else self.group_0
+    #     return random.choice(current_group), random.choice(prev_group)
+
+    # def update_all_weights(self, weights_ref):
+    #     print("[collector] type(weights_ref):", type(weights_ref))
+
+    #     current_group = self.group_0 if self.current_group_id == 0 else self.group_1
+    #     # ray.get([client.update_weights.remote(weights_ref) for client in current_group])
+    #     for client in current_group:
+    #         client.update_weights.remote(weights_ref)
+    #     self.current_group_id = 1 - self.current_group_id  # flip roles
 
 def make_env(env_id: str):
     env = ta.make(env_id); env = ta.wrappers.FirstLastObservationWrapper(env)
     env.reset(num_players=2); env.state.error_allowance = 0
     return env
 
+
+    #(args=args, current_ckpt_player_id=player_id, buffer=buffer, tracker=tracker, actor=actor, lora_0=lora_0, lora_1=lora_1)
+
 @ray.remote(num_cpus=0.1)
-def collect_episode_once(args, current_ckpt_player_id: int, buffer, tracker, actor1, actor2):
+def collect_episode_once(args, player_id: int, buffer, tracker, actor, lora_0, lora_1):
     env = make_env(env_id=args.train_env_id)
     traj = Trajectory()
     done, steps = False, 0
-    actors = {current_ckpt_player_id: actor1, 1 - current_ckpt_player_id: actor2}
+    # actors = {current_ckpt_player_id: actor1, 1 - current_ckpt_player_id: actor2}
+    lora_paths = {player_id: lora_0, 1-player_id: lora_1}
     while not done and steps < args.max_env_steps:
         pid, obs = env.get_observation()
         formatted_prompt = OBSERVATION_FORMATTING[args.observation_format_template](observation=obs)
-        action = ray.get(actors[pid].submit_prompt.remote(formatted_prompt))
+        # select lora weights and submit to actor
+        # print(f"REQUESTING MODEL ACTION")
+        action = ray.get(actor.submit_prompt.remote(prompt=formatted_prompt, lora_path=lora_paths[pid]))
+        # print(f"RECEIVED MODEL ACTION")
+        # action = ray.get(actors[pid].submit_prompt.remote(formatted_prompt))
         extracted_action, format_feedback = ACTION_EXTRACTION[args.action_extraction_template](raw_action=action) # extract environment action
         done, _ = env.step(action=extracted_action)
 
@@ -92,12 +134,12 @@ def collect_episode_once(args, current_ckpt_player_id: int, buffer, tracker, act
 
     traj.num_turns = steps
     print(f"GAME FINISHED< ADDING TO BUFFER. num steps: {steps}")
-    ray.get(buffer.add_trajectory.remote(traj, current_checkpoint_pid=current_ckpt_player_id))
-    ray.get(tracker.add_trajectory.remote(traj, current_checkpoint_pid=current_ckpt_player_id))
+    ray.get(buffer.add_trajectory.remote(traj, current_checkpoint_pid=player_id))
+    ray.get(tracker.add_trajectory.remote(traj, current_checkpoint_pid=player_id))
 
 
 @ray.remote(num_cpus=0.1)
-def run_eval_episode(args, player_id: int, tracker, actor):
+def run_eval_episode(args, player_id: int, tracker, actor, lora):
     env = make_env(env_id=args.eval_env_id)
 
     episode_info = []
@@ -116,7 +158,7 @@ def run_eval_episode(args, player_id: int, tracker, actor):
         else:
             model_name = "current_ckpt"
             formatted_prompt = apply_r1_template(observation=obs)
-            raw_action = ray.get(agent.submit_prompt.remote(formatted_prompt))
+            raw_action = ray.get(agent.submit_prompt.remote(prompt=formatted_prompt, lora_path=lora))
             action, format_feedback = extract_action_and_format_feedback(raw_action=raw_action)
         
         done, info = env.step(action=action) # submit to env
@@ -146,17 +188,19 @@ def start_actor_loop(args, collector, buffer, tracker):
             # Replenish collection
             if len(collection_outstanding) < args.num_collection_workers:
                 # a1, a2 = collector.get_current_and_prev_client()
-                a1, a2 = ray.get(collector.get_current_and_prev_client.remote())
+                # a1, a2 = ray.get(collector.get_current_and_prev_client.remote())
+                (lora_0, lora_1), actor = ray.get(collector.get_lora_paths_and_actor.remote())
                 player_id = int(np.random.uniform()<0.5)
-                future = collect_episode_once.remote(args=args, current_ckpt_player_id=player_id, buffer=buffer, tracker=tracker, actor1=a1, actor2=a2)
+                future = collect_episode_once.remote(args=args, player_id=player_id, buffer=buffer, tracker=tracker, actor=actor, lora_0=lora_0, lora_1=lora_1)
                 collection_outstanding.append(future)
 
             # Replenish evaluation
             if len(evaluation_outstanding) < args.num_evaluation_workers:
-                # a1, _ = collector.get_current_and_prev_client()
-                a1, _ = ray.get(collector.get_current_and_prev_client.remote())
+                # # a1, _ = collector.get_current_and_prev_client()
+                # a1, _ = ray.get(collector.get_current_and_prev_client.remote())
+                (lora_0, lora_1), actor = ray.get(collector.get_lora_paths_and_actor.remote())
                 player_id = int(np.random.uniform()<0.5)
-                future = run_eval_episode.remote(args=args, player_id=player_id, tracker=tracker, actor=a1)
+                future = run_eval_episode.remote(args=args, player_id=player_id, tracker=tracker, actor=actor, lora=lora_0)
                 evaluation_outstanding.append(future)
 
             time.sleep(0.05)
@@ -208,6 +252,7 @@ def main():
     ap.add_argument("--num_learners", type=int, default=1)
     ap.add_argument("--num_collection_workers", type=int, default=384)
     ap.add_argument("--num_evaluation_workers", type=int, default=4)
+    ap.add_argument("--max_vllm_seq", type=int, default=384)
 
     # collection params
     ap.add_argument("--train_env_id", default="TicTacToe-v0")
@@ -234,6 +279,14 @@ def main():
     ap.add_argument("--wandb_project_name", type=str, default="UnstableBaselines")
     ap.add_argument("--ema_tau", type=float, default=0.01)
     ap.add_argument("--ma_range", type=int, default=100)
+
+
+
+    # lora
+    ap.add_argument("--lora_rank", type=int, default=32)
+    ap.add_argument("--lora_alpha", type=int, default=32)
+    ap.add_argument("--lora_dropout", type=int, default=0.0)
+
 
     args = ap.parse_args() 
     args.max_buffer_size = args.batch_size*3
@@ -264,7 +317,7 @@ def main():
     )
 
     scaling_config=ScalingConfig(num_workers=args.num_learners, use_gpu=True, resources_per_worker={"CPU": 2})
-    trainer = TorchTrainer(train_loop_per_worker=train_loop_per_worker, scaling_config=scaling_config, train_loop_config={"args": args, "buffer": buffer})
+    # trainer = TorchTrainer(train_loop_per_worker=train_loop_per_worker, scaling_config=scaling_config, train_loop_config={"args": args, "buffer": buffer})
     # ray.remote(lambda: trainer.fit()).remote() # start training loop
 
     tracker = WandBTracker.remote(args=args)
@@ -274,12 +327,14 @@ def main():
 
 
     # run_cfg = RunConfig(callbacks=[BroadcastWeightsCallback(collector)])
-
+    # run_cfg = RunConfig(callbacks=[BroadcastWeightsCallback(collector)])
+    root_dir = os.getcwd()
     trainer = TorchTrainer(
         train_loop_per_worker=train_loop_per_worker,
         scaling_config=scaling_config,
-        # run_config=run_cfg,
+        # ddp_config=ray.train.torch.TorchConfig(), #find_unused_parameters=False),
         train_loop_config={"args": args, "buffer": buffer, "collector": collector},
+        run_config=RunConfig(storage_path=root_dir)
     )
 
     # Start training in a background thread so the driver can keep running.

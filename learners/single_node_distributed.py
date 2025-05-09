@@ -1,11 +1,14 @@
-import ray, torch, time, wandb
+import ray, torch, os, time, wandb
 from ray.train import get_context
 from ray.air import session
 from ray.train import Checkpoint
 from transformers import AutoModelForCausalLM, AutoTokenizer
+from learners.lora_utils import build_lora_model, lora_state_dict
+from peft import get_peft_model_state_dict, set_peft_model_state_dict
 
 # local imports
 from algorithms import Reinforce, PPO
+
 
 
 def train_loop_per_worker(cfg):
@@ -13,6 +16,10 @@ def train_loop_per_worker(cfg):
 
     # init wandb
     wandb.init(project=args.wandb_project_name, name=args.wandb_name, config=args)
+
+    root_dir = os.getcwd()
+    root_checkpoint_dir = os.path.join(root_dir, args.output_dir_checkpoints)
+    print(f'WILL STORE TO: {root_checkpoint_dir}')
 
     # Ray Train context & DDP ranks
     ctx = get_context()
@@ -25,12 +32,34 @@ def train_loop_per_worker(cfg):
     import torch.distributed as dist
     assert dist.is_initialized() # sanity-check
 
-    model = AutoModelForCausalLM.from_pretrained(args.model_name, trust_remote_code=True, torch_dtype=torch.bfloat16).to(device)
-    model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[local_gpu], output_device=local_gpu)
-    tokenizer = AutoTokenizer.from_pretrained(args.model_name, trust_remote_code=True)
+    # load base + LoRA
+    base = AutoModelForCausalLM.from_pretrained(
+        args.model_name,
+        trust_remote_code=True,
+        torch_dtype=torch.bfloat16
+    )
+    peft_model = build_lora_model(model=base, r=args.lora_rank, alpha=args.lora_alpha, dropout=args.lora_dropout).to(device)
+
+    # wrap PEFT model in DDP
+    # if rank > 1:
+    model = torch.nn.parallel.DistributedDataParallel(
+        peft_model,
+        device_ids=[local_gpu],
+        output_device=local_gpu,
+        find_unused_parameters=False
+    )
+    tokenizer = AutoTokenizer.from_pretrained(
+        args.model_name,
+        trust_remote_code=True,
+    )
+
+    # optimizer over only the adapters
+    optimizer = torch.optim.AdamW(
+        filter(lambda p: p.requires_grad, model.parameters()),
+        lr=args.lr,
+    )
 
     algo = Reinforce(args, model, tokenizer, device)
-    optimizer = algo.optimizer
 
     gpu_batch_size = args.batch_size // world_size
     iteration = 0
@@ -47,6 +76,7 @@ def train_loop_per_worker(cfg):
         for i in range(args.gradient_accumulation_steps):
             start, end = i*mini_batch_size, (i+1)*mini_batch_size
             mini_batch = batch[start:end] 
+
             update_info = algo.update(mini_batch)
 
             for k in update_info:
@@ -68,36 +98,32 @@ def train_loop_per_worker(cfg):
 
 
         if rank == 0:
-            state_dict = model.module.state_dict() if world_size > 1 else model.state_dict()
-            cpu_state = {k: v.detach().to(dtype=torch.float32).cpu().numpy() for k, v in state_dict.items()}
-            weights_ref = ray.put(cpu_state)  # ✅ put ONCE — do NOT ray.get() this again
-            print("[learner] type(weights_ref):", type(weights_ref))
-            collector.update_all_weights.remote(weights_ref)  # ✅ passes ObjectRef to remote actor
+            # store lora weights to be loaded by vllm
+            # peft_model = model.module if world_size > 1 else model
 
+            # save only the adapter weights in HuggingFace format
+            checkpoint_folder_path = os.path.join(root_checkpoint_dir, f"iteration-{iteration}")
+            # print(f"trying to store to {checkpoint_folder_path}")
+            os.makedirs(checkpoint_folder_path, exist_ok=True)
+            # print("FOLDER CREATED")
+            peft_model = (
+                model.module
+                if isinstance(model, torch.nn.parallel.DistributedDataParallel)
+                else model
+            )
+            # print("MODEL UNWRAPPED")
+            peft_model.save_pretrained(checkpoint_folder_path)
+            # time.sleep(2)
+            # print("STORED")
 
+            ray.get(collector.set_new_lora_paths.remote(checkpoint_folder_path))
 
-            # weights_ref = ray.put(cpu_state)
-            # ray.get(collector.update_all_weights.remote(weights_ref))
-            # collector.update_all_weights(weights_ref)
-            # collector.update_all_weights.remote(weights_ref)
+            # (optional) report progress to Ray/WandB
+            session.report({"iteration": iteration})
 
-
-            # session.report({"iteration": iteration, "weights": cpu_state})
-
-            # checkpoint = Checkpoint.from_dict({"iteration": iteration, "model": cpu_weights})
-            # session.report({"iteration": iteration}, checkpoint=checkpoint)
 
         iteration += 1
 
-
-        # if rank == 0:
-        #     cpu_state = {k: v.detach().cpu() for k, v in model.module.state_dict().items()}
-        #     session.report({
-        #         "iteration": iteration,
-        #         "model": cpu_state
-        #     })
-
-        # iteration += 1
 
 
     
