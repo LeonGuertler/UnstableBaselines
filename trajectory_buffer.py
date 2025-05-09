@@ -144,8 +144,8 @@ class WandBTracker:
 
         # Update outcome metrics
         for metric in ["Win Rate", "Loss Rate", "Draw Rate"]:
-            self.update_metric(metric, int(metric == outcome_metric))
-        self.update_metric("Game Length", len(episode_info)) # Turn count
+            self.update_metric(metric, int(metric == outcome_metric), "eval")
+        self.update_metric("Game Length", len(episode_info), "eval") # Turn count
 
         # Save CSV
         self.log_metrics("eval")
@@ -163,21 +163,21 @@ class WandBTracker:
         raw_prev = trajectory.final_rewards[1 - current_checkpoint_pid]
 
         # Outcome
-        self.update_metric("Win Rate",  int(raw_current > raw_prev))
-        self.update_metric("Loss Rate", int(raw_current < raw_prev))
-        self.update_metric("Draw Rate", int(raw_current == raw_prev))
+        self.update_metric("Win Rate",  int(raw_current > raw_prev), "collection")
+        self.update_metric("Loss Rate", int(raw_current < raw_prev), "collection")
+        self.update_metric("Draw Rate", int(raw_current == raw_prev), "collection")
 
         # Invalid game
-        self.update_metric("Invalid Move Rate", int(list(trajectory.final_rewards.values()) in [[0,-1], [-1,0]]))
+        self.update_metric("Invalid Move Rate", int(list(trajectory.final_rewards.values()) in [[0,-1], [-1,0]]), "collection")
 
         # Game structure
         n_turns = len(trajectory.pid)
-        self.update_metric("Game Length", n_turns)
+        self.update_metric("Game Length", n_turns, "collection")
 
         for i in range(n_turns):
-            self.update_metric("Format Success Rate", int(trajectory.format_feedbacks[i]["has_think"]))
-            self.update_metric("Format Invalid Move Rate", int(trajectory.format_feedbacks[i]["invalid_move"]))
-            self.update_metric("Response Length (avg char)", len(trajectory.actions[i]))
+            self.update_metric("Format Success Rate", int(trajectory.format_feedbacks[i]["has_think"]), "collection")
+            self.update_metric("Format Invalid Move Rate", int(trajectory.format_feedbacks[i]["invalid_move"]), "collection")
+            self.update_metric("Response Length (avg char)", len(trajectory.actions[i]), "collection")
 
         self.num_trajectories += 1
         self.log_metrics("collection")
