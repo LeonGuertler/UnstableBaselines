@@ -13,7 +13,6 @@ from algorithms import Reinforce, PPO
 
 def train_loop_per_worker(cfg):
     args = cfg["args"]; buffer = cfg["buffer"]; collector = cfg["collector"]
-
     # init wandb
     wandb.init(project=args.wandb_project_name, name=args.wandb_name, config=args)
 
@@ -35,9 +34,7 @@ def train_loop_per_worker(cfg):
     # load base + LoRA
     base = AutoModelForCausalLM.from_pretrained(args.model_name, trust_remote_code=True, torch_dtype=torch.bfloat16)
     peft_model = build_lora_model(model=base, r=args.lora_rank, alpha=args.lora_alpha, dropout=args.lora_dropout).to(device)
-    model = torch.nn.parallel.DistributedDataParallel( # wrap PEFT model in DDP
-        peft_model, device_ids=[local_gpu], output_device=local_gpu, find_unused_parameters=False
-    )
+    model = torch.nn.parallel.DistributedDataParallel(peft_model, device_ids=[local_gpu], output_device=local_gpu, find_unused_parameters=False)
     tokenizer = AutoTokenizer.from_pretrained(args.model_name, trust_remote_code=True)
     optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr) # optimizer over only the adapters
     algo = Reinforce(args, model, tokenizer, device)
@@ -52,14 +49,11 @@ def train_loop_per_worker(cfg):
         optimizer.zero_grad(set_to_none=True)
 
         metrics = {}
-
         mini_batch_size = len(batch)//args.gradient_accumulation_steps
         for i in range(args.gradient_accumulation_steps):
             start, end = i*mini_batch_size, (i+1)*mini_batch_size
             mini_batch = batch[start:end] 
-
             update_info = algo.update(mini_batch)
-
             for k in update_info:
                 metrics[k] = metrics.get(k, 0.0) + update_info[k]
         

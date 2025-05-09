@@ -6,7 +6,6 @@ class BaseAlgo:
         self.model = model
         self.tokenizer = tokenizer
         self.device = device
-        # self.optimizer = torch.optim.AdamW(model.parameters(), lr=args.lr)
 
     def prepare_batch(self, steps):
         """

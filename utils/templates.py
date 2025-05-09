@@ -25,8 +25,6 @@ def extract_action_and_format_feedback(raw_action: str) -> Tuple[str, Dict[str, 
 
 
 
-
-
 OBSERVATION_FORMATTING = {
     "default": apply_default_template
 }

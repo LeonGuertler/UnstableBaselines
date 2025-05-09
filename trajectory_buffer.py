@@ -36,7 +36,6 @@ class StepBuffer:
 
 
     def add_trajectory(self, trajectory: Trajectory, current_checkpoint_pid: Optional[int] = None):
-        # print(f"trying to add episode to buffer")
         transformed_rewards = self.final_reward_transformation(trajectory.final_rewards) # apply final rewards transformations
         n = len(trajectory.pid)
         for i in range(n):
@@ -85,34 +84,50 @@ class WandBTracker:
         self.ema_metrics = {}
         self.ma_metrics = {}
 
+        self.ema_metrics_eval = {}
+        self.ma_metrics_eval = {}
+
         # Core counters
         self.eval_ep_count = 0
         self.num_trajectories = 0
 
-    def update_metric(self, name, value):
-        self.ema_metrics[name] = (1 - self.tau) * self.ema_metrics.get(name, 0.0) + self.tau * value # EMA
-        if name not in self.ma_metrics: # MA
-            self.ma_metrics[name] = deque(maxlen=self.ma_range) 
-        self.ma_metrics[name].append(value)
+    def update_metric(self, name, value, prefix):
+        if prefix == "collection:"
+            self.ema_metrics[name] = (1 - self.tau) * self.ema_metrics.get(name, 0.0) + self.tau * value # EMA
+            if name not in self.ma_metrics: # MA
+                self.ma_metrics[name] = deque(maxlen=self.ma_range) 
+            self.ma_metrics[name].append(value)
+        elif prefix == "eval":
+            self.ema_metrics_eval[name] = (1 - self.tau) * self.ema_metrics_eval.get(name, 0.0) + self.tau * value # EMA
+            if name not in self.ma_metrics_eval: # MA
+                self.ma_metrics_eval[name] = deque(maxlen=self.ma_range) 
+            self.ma_metrics_eval[name].append(value)
+
+
 
     def log_metrics(self, prefix):
         ema_tag = f"{prefix} (EMA - tau={self.tau})"
         ma_tag  = f"{prefix} (MA - range={self.ma_range})"
         wandb_dict = {}
 
-        for k in self.ema_metrics:
-            wandb_dict[f"{ema_tag}/{k}"] = self.ema_metrics[k]
-        for k in self.ma_metrics:
-            if self.ma_metrics[k]:
-                wandb_dict[f"{ma_tag}/{k}"] = sum(self.ma_metrics[k]) / len(self.ma_metrics[k])
-
-        # Special counts
-        if prefix == "eval":
-            wandb_dict[f"{ema_tag}/Num Games"] = self.eval_ep_count
-            wandb_dict[f"{ma_tag}/Num Games"] = self.eval_ep_count
-        elif prefix == "collection":
+        if prefix=="collection":
+            for k in self.ema_metrics:
+                wandb_dict[f"{ema_tag}/{k}"] = self.ema_metrics[k]
+            for k in self.ma_metrics:
+                if self.ma_metrics[k]:
+                    wandb_dict[f"{ma_tag}/{k}"] = sum(self.ma_metrics[k]) / len(self.ma_metrics[k])
             wandb_dict[f"{ema_tag}/Num Trajectories"] = self.num_trajectories
             wandb_dict[f"{ma_tag}/Num Trajectories"] = self.num_trajectories
+
+        elif prefix=="eval":
+            for k in self.ema_metrics_eval:
+                wandb_dict[f"{ema_tag}/{k}"] = self.ema_metrics_eval[k]
+            for k in self.ma_metrics_eval:
+                if self.ma_metrics_eval[k]:
+                    wandb_dict[f"{ma_tag}/{k}"] = sum(self.ma_metrics_eval[k]) / len(self.ma_metrics_eval[k])
+            wandb_dict[f"{ema_tag}/Num Games"] = self.eval_ep_count
+            wandb_dict[f"{ma_tag}/Num Games"] = self.eval_ep_count
+
 
         wandb.log(wandb_dict)
 
