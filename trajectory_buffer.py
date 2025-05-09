@@ -117,6 +117,7 @@ class WandBTracker:
         wandb.log(wandb_dict)
 
     def add_eval_episode(self, episode_info: list, final_reward: dict, current_ckpt_pid: int):
+        print(episode_info)
         reward_current = final_reward[current_ckpt_pid]
         reward_other = final_reward[1 - current_ckpt_pid]
 

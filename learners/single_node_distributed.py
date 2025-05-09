@@ -33,38 +33,19 @@ def train_loop_per_worker(cfg):
     assert dist.is_initialized() # sanity-check
 
     # load base + LoRA
-    base = AutoModelForCausalLM.from_pretrained(
-        args.model_name,
-        trust_remote_code=True,
-        torch_dtype=torch.bfloat16
-    )
+    base = AutoModelForCausalLM.from_pretrained(args.model_name, trust_remote_code=True, torch_dtype=torch.bfloat16)
     peft_model = build_lora_model(model=base, r=args.lora_rank, alpha=args.lora_alpha, dropout=args.lora_dropout).to(device)
-
-    # wrap PEFT model in DDP
-    # if rank > 1:
-    model = torch.nn.parallel.DistributedDataParallel(
-        peft_model,
-        device_ids=[local_gpu],
-        output_device=local_gpu,
-        find_unused_parameters=False
+    model = torch.nn.parallel.DistributedDataParallel( # wrap PEFT model in DDP
+        peft_model, device_ids=[local_gpu], output_device=local_gpu, find_unused_parameters=False
     )
-    tokenizer = AutoTokenizer.from_pretrained(
-        args.model_name,
-        trust_remote_code=True,
-    )
-
-    # optimizer over only the adapters
-    optimizer = torch.optim.AdamW(
-        filter(lambda p: p.requires_grad, model.parameters()),
-        lr=args.lr,
-    )
-
+    tokenizer = AutoTokenizer.from_pretrained(args.model_name, trust_remote_code=True)
+    optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr) # optimizer over only the adapters
     algo = Reinforce(args, model, tokenizer, device)
 
     gpu_batch_size = args.batch_size // world_size
     iteration = 0
     while True:
-        while ray.get(buffer.size.remote()) < args.batch_size: # wait until buffer has enough
+        while ray.get(buffer.size.remote()) < args.batch_size*1.5: # wait until buffer has enough + stability buffer
             time.sleep(0.2)
 
         batch = ray.get(buffer.get_batch.remote(gpu_batch_size)) # each worker independently pulls *its own* mini-batch
@@ -86,7 +67,6 @@ def train_loop_per_worker(cfg):
         torch.nn.utils.clip_grad_norm_(model.parameters(), args.gradient_clip)
         optimizer.step()
 
-
         # log to WandB
         if rank == 0: # TODO add the learner name here since each learner might track custom stuff
             avg_metrics = {f"learner/{k}": v / args.gradient_accumulation_steps for k, v in metrics.items()}
@@ -94,34 +74,14 @@ def train_loop_per_worker(cfg):
             avg_metrics["learner/grad_norm"] = sum(p.grad.data.norm(2).item()**2 for p in model.parameters() if p.grad is not None) ** 0.5
             avg_metrics["learner/lr"] = optimizer.param_groups[0]["lr"]
             wandb.log(avg_metrics)
-            # log straight to wandb
-
 
         if rank == 0:
-            # store lora weights to be loaded by vllm
-            # peft_model = model.module if world_size > 1 else model
-
-            # save only the adapter weights in HuggingFace format
             checkpoint_folder_path = os.path.join(root_checkpoint_dir, f"iteration-{iteration}")
-            # print(f"trying to store to {checkpoint_folder_path}")
             os.makedirs(checkpoint_folder_path, exist_ok=True)
-            # print("FOLDER CREATED")
-            peft_model = (
-                model.module
-                if isinstance(model, torch.nn.parallel.DistributedDataParallel)
-                else model
-            )
-            # print("MODEL UNWRAPPED")
+            peft_model = model.module if isinstance(model, torch.nn.parallel.DistributedDataParallel) else model
             peft_model.save_pretrained(checkpoint_folder_path)
-            # time.sleep(2)
-            # print("STORED")
-
             ray.get(collector.set_new_lora_paths.remote(checkpoint_folder_path))
-
-            # (optional) report progress to Ray/WandB
             session.report({"iteration": iteration})
-
-
         iteration += 1
 
 
