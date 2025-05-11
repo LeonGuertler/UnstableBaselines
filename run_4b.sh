@@ -3,11 +3,15 @@ python3 unstable.py \
     --wandb \
     --num_actors 2 \
     --num_learners 1 \
-    --lr 1e-5 \
-    --batch_size 256 \
-    --gradient_accumulation_steps 256 \
+    --lr 1e-6 \
+    --batch_size 512 \
+    --gradient_accumulation_steps 512 \
     --max_tokens 4096 \
     --gradient_checkpointing \
     --bf16_training \
     --num_collection_workers 512 \
-    --num_evaluation_workers 8
+    --num_evaluation_workers 8 \
+    --lora_rank 32 \
+    --lora_alpha 32 \
+    --lora_dropout 0 \
+    --temperature 0.5
