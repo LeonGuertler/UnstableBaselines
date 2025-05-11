@@ -8,7 +8,6 @@ from peft import get_peft_model_state_dict, set_peft_model_state_dict
 
 # local imports
 from algorithms import Reinforce, PPO
-from algorithms.ppo import ActorCriticWrapper
 
 
 
@@ -33,19 +32,9 @@ def train_loop_per_worker(cfg):
     assert dist.is_initialized() # sanity-check
 
     # load base + LoRA
-    # base = AutoModelForCausalLM.from_pretrained(args.model_name, trust_remote_code=True, torch_dtype=torch.bfloat16)
-    # peft_model = build_lora_model(model=base, r=args.lora_rank, alpha=args.lora_alpha, dropout=args.lora_dropout).to(device)
-    # model = torch.nn.parallel.DistributedDataParallel(peft_model, device_ids=[local_gpu], output_device=local_gpu, find_unused_parameters=False)
     base = AutoModelForCausalLM.from_pretrained(args.model_name, trust_remote_code=True, torch_dtype=torch.bfloat16)
     peft_model = build_lora_model(model=base, r=args.lora_rank, alpha=args.lora_alpha, dropout=args.lora_dropout).to(device)
-
-    # === wrap with value head ====================================================
-    hidden_size = peft_model.config.hidden_size          # works for most HF models
-    ac_model = ActorCriticWrapper(peft_model, hidden_size).to(device)
-    model = torch.nn.parallel.DistributedDataParallel(ac_model, device_ids=[local_gpu], output_device=local_gpu, find_unused_parameters=False)
-    
-    
-    
+    model = torch.nn.parallel.DistributedDataParallel(peft_model, device_ids=[local_gpu], output_device=local_gpu, find_unused_parameters=False)
     tokenizer = AutoTokenizer.from_pretrained(args.model_name, trust_remote_code=True)
     optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr) # optimizer over only the adapters
     # algo = Reinforce(args, model, tokenizer, device)
@@ -84,7 +73,7 @@ def train_loop_per_worker(cfg):
         if rank == 0:
             checkpoint_folder_path = os.path.join(root_checkpoint_dir, f"iteration-{iteration}")
             os.makedirs(checkpoint_folder_path, exist_ok=True)
-            peft_model = model.module.base if isinstance(model, torch.nn.parallel.DistributedDataParallel) else model.base
+            peft_model = model.module if isinstance(model, torch.nn.parallel.DistributedDataParallel) else model
             peft_model.save_pretrained(checkpoint_folder_path)
             ray.get(collector.set_new_lora_paths.remote(checkpoint_folder_path))
             session.report({"iteration": iteration})

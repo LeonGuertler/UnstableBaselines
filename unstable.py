@@ -225,7 +225,15 @@ def main():
     # lora
     ap.add_argument("--lora_rank", type=int, default=32)
     ap.add_argument("--lora_alpha", type=int, default=32)
-    ap.add_argument("--lora_dropout", type=int, default=0.0)
+    ap.add_argument("--lora_dropout", type=float, default=0.0)
+
+
+
+    # PPO realted
+    ap.add_argument("--ppo_clip_eps", type=float, default=0.2)
+    ap.add_argument("--vf_coef", type=float, default=0.5)
+    ap.add_argument("--entropy_coef", type=float, default=0.01)
+
 
 
     args = ap.parse_args() 
