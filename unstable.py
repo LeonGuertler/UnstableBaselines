@@ -229,7 +229,7 @@ def main():
 
 
     args = ap.parse_args() 
-    args.max_buffer_size = args.batch_size*3
+    args.max_buffer_size = args.batch_size*5
     args = initialize_local_folder_structure(args=args)
 
     # build the reward transformations to be used

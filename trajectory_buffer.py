@@ -50,8 +50,8 @@ class StepBuffer:
 
     def get_batch(self, batch_size: int) -> List[Step]:
         batch = random.sample(self.steps, batch_size)
-        for b in batch:
-            self.steps.remove(b)
+        # for b in batch:
+        #     self.steps.remove(b)
         batch = self.sampling_reward_transformation(batch) # apply sampling reward transformations
 
         if self.args.log_training_data: # store training data as csv file
