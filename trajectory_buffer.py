@@ -44,9 +44,12 @@ class StepBuffer:
             self.steps.append(Step(pid=trajectory.pid[i], obs=trajectory.obs[i], act=trajectory.actions[i], reward=step_reward))
         print(f"BUFFER SIZE: {len(self.steps)}, added {n} steps")
 
-        # if len(self.steps) > self.args.max_buffer_size: # TODO randomly subsample
-        #     self.steps = self.steps[-self.args.max_buffer_size:]
 
+        excess_num_samples = len(self.steps) - self.args.max_buffer_size
+        if excess_num_samples > 0:
+            randm_sampled = random.sample(self.steps, excess_num_samples)
+            for b in randm_sampled:
+                self.steps.remove(b)
 
     def get_batch(self, batch_size: int) -> List[Step]:
         batch = random.sample(self.steps, batch_size)
