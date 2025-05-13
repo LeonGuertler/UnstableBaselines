@@ -19,6 +19,9 @@ def extract_action_and_format_feedback(raw_action: str) -> Tuple[str, Dict[str, 
         if len(action) <= 0.2*len(raw_action) and len(raw_action)>1000:
             format_reward = 1
 
+    else:
+        action = raw_action
+
     format_feedback = {"has_think": format_reward, "has_answer": False, "order_correct": False}
     return action, format_feedback
 

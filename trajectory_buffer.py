@@ -44,14 +44,14 @@ class StepBuffer:
             self.steps.append(Step(pid=trajectory.pid[i], obs=trajectory.obs[i], act=trajectory.actions[i], reward=step_reward))
         print(f"BUFFER SIZE: {len(self.steps)}, added {n} steps")
 
-        if len(self.steps) > self.args.max_buffer_size: # TODO randomly subsample
-            self.steps = self.steps[-self.args.max_buffer_size:]
+        # if len(self.steps) > self.args.max_buffer_size: # TODO randomly subsample
+        #     self.steps = self.steps[-self.args.max_buffer_size:]
 
 
     def get_batch(self, batch_size: int) -> List[Step]:
         batch = random.sample(self.steps, batch_size)
-        # for b in batch:
-        #     self.steps.remove(b)
+        for b in batch:
+            self.steps.remove(b)
         batch = self.sampling_reward_transformation(batch) # apply sampling reward transformations
 
         if self.args.log_training_data: # store training data as csv file
@@ -111,6 +111,8 @@ class WandBTracker:
         wandb_dict = {}
 
         if prefix=="collection":
+            print(f"ma_metrics: {self.ma_metrics}")
+            print(f"ema_metrics: {self.ema_metrics}")
             for k in self.ema_metrics:
                 wandb_dict[f"{ema_tag}/{k}"] = self.ema_metrics[k]
             for k in self.ma_metrics:
@@ -180,4 +182,5 @@ class WandBTracker:
             self.update_metric("Response Length (avg char)", len(trajectory.actions[i]), "collection")
 
         self.num_trajectories += 1
+        print("Trying to log collection metrics")
         self.log_metrics("collection")

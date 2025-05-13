@@ -39,7 +39,7 @@
 
 - split output dir by date, then time
 
-
+- fix where the lora weights end up
 
 KIV:
 - track time per complete episode

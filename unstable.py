@@ -31,8 +31,8 @@ class RayActor(VLLMActor):
 class Collector:
     def __init__(self, args): 
         self.args = args
-        self.p0_lora_path: Optional[str] = None
-        self.p1_lora_path: Optional[str] = None
+        self.p0_lora_path: Optional[str] = args.initial_lora_path
+        self.p1_lora_path: Optional[str] = args.initial_lora_path
 
         self.actor_group: List[ray.actor.ActorHandle] = []
         self.current_group_id = 0
@@ -60,6 +60,7 @@ class Collector:
 
 def make_env(env_id: str):
     env = ta.make(env_id); env = ta.wrappers.FirstLastObservationWrapper(env)
+    # env = ta.make(env_id); env = ta.wrappers.LLMObservationWrapper(env)
     env.reset(num_players=2); env.state.error_allowance = 0
     return env
 
@@ -226,10 +227,11 @@ def main():
     ap.add_argument("--lora_rank", type=int, default=32)
     ap.add_argument("--lora_alpha", type=int, default=32)
     ap.add_argument("--lora_dropout", type=int, default=0.0)
+    ap.add_argument("--initial_lora_path", type=str, default=None)
 
 
     args = ap.parse_args() 
-    args.max_buffer_size = args.batch_size*5
+    args.max_buffer_size = args.batch_size*3
     args = initialize_local_folder_structure(args=args)
 
     # build the reward transformations to be used

@@ -1,7 +1,7 @@
 python3 unstable.py \
-    --model_name "Qwen/Qwen3-0.6B" \
+    --model_name "Qwen/Qwen3-4B-base" \
     --wandb \
-    --num_actors 3 \
+    --num_actors 2 \
     --num_learners 1 \
     --lr 1e-4 \
     --batch_size 384 \
@@ -9,10 +9,9 @@ python3 unstable.py \
     --max_tokens 4096 \
     --gradient_checkpointing \
     --bf16_training \
-    --num_collection_workers 120 \
-    --num_evaluation_workers 6 \
-    --lora_rank 16 \
-    --lora_alpha 16 \
+    --num_collection_workers 384 \
+    --num_evaluation_workers 8 \
+    --lora_rank 32 \
+    --lora_alpha 32 \
     --lora_dropout 0 \
-    --temperature 0.5
-
+    --initial_lora_path "TODO"
