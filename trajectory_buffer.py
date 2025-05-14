@@ -114,8 +114,6 @@ class WandBTracker:
         wandb_dict = {}
 
         if prefix=="collection":
-            print(f"ma_metrics: {self.ma_metrics}")
-            print(f"ema_metrics: {self.ema_metrics}")
             for k in self.ema_metrics:
                 wandb_dict[f"{ema_tag}/{k}"] = self.ema_metrics[k]
             for k in self.ma_metrics:
@@ -185,5 +183,5 @@ class WandBTracker:
             self.update_metric("Response Length (avg char)", len(trajectory.actions[i]), "collection")
 
         self.num_trajectories += 1
-        print("Trying to log collection metrics")
+        # print("Trying to log collection metrics")
         self.log_metrics("collection")

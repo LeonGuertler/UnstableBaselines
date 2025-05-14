@@ -6,12 +6,21 @@ python3 unstable.py \
     --lr 1e-4 \
     --batch_size 384 \
     --gradient_accumulation_steps 384 \
-    --max_tokens 4096 \
+    --max_tokens 3000 \
     --gradient_checkpointing \
     --bf16_training \
     --num_collection_workers 384 \
     --num_evaluation_workers 8 \
     --lora_rank 32 \
     --lora_alpha 32 \
-    --lora_dropout 0 \
-    --initial_lora_path "TODO"
+    --lora_dropout 0 
+    
+    
+# \
+# --initial_lora_path None
+    
+    
+#"outputs/sft_lora_4b/checkpoint-3"
+
+
+ #Qwen/Qwen3-4B-base" \

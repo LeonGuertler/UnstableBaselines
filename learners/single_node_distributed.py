@@ -1,9 +1,9 @@
-import ray, torch, os, time, wandb
+import ray, torch, os, time, wandb, pathlib
 from ray.train import get_context
 from ray.air import session
 from ray.train import Checkpoint
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from learners.lora_utils import build_lora_model, lora_state_dict
+from learners.lora_utils import build_lora_model, lora_state_dict, load_lora_state
 from peft import get_peft_model_state_dict, set_peft_model_state_dict
 
 # local imports
@@ -35,19 +35,10 @@ def train_loop_per_worker(cfg):
     base = AutoModelForCausalLM.from_pretrained(args.model_name, trust_remote_code=True, torch_dtype=torch.bfloat16)
     peft_model = build_lora_model(model=base, r=args.lora_rank, alpha=args.lora_alpha, dropout=args.lora_dropout).to(device)
 
-    # check whether to load previous weights
-    if args.initial_lora_path: # if 'None' train from scratch
-        ckpt_dir = pathlib.Path(args.initial_lora_path)
-        model_file = ckpt_dir / "adapter_model.bin" # PEFT-style filename
-        if not model_file.exists(): # fall-back for older PEFT
-            model_file = ckpt_dir / "pytorch_model.bin"
-
-        print(f"[rank {rank}] loading LoRA weights from → {model_file}")
-        lora_sd = torch.load(model_file, map_location="cpu") # CPU / fp32
-        load_lora_state(peft_model, lora_sd) # helper above
-        del lora_sd # free memory
+    # load initial weights if provided
+    if args.initial_lora_path and args.initial_lora_path.lower() != "none":
+        load_lora_state(peft_model, args.initial_lora_path)
         torch.cuda.empty_cache()
-
 
     model = torch.nn.parallel.DistributedDataParallel(peft_model, device_ids=[local_gpu], output_device=local_gpu, find_unused_parameters=False)
     tokenizer = AutoTokenizer.from_pretrained(args.model_name, trust_remote_code=True)
@@ -57,7 +48,7 @@ def train_loop_per_worker(cfg):
     gpu_batch_size = args.batch_size // world_size
     iteration = 0
     while True:
-        while ray.get(buffer.size.remote()) < args.batch_size*1.5: # wait until buffer has enough + stability buffer
+        while ray.get(buffer.size.remote()) < args.batch_size*2: # wait until buffer has enough + stability buffer
             time.sleep(0.2)
 
         batch = ray.get(buffer.get_batch.remote(gpu_batch_size)) # each worker independently pulls *its own* mini-batch

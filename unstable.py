@@ -21,6 +21,32 @@ from utils.templates import OBSERVATION_FORMATTING, ACTION_EXTRACTION
 from utils.local_files import initialize_local_folder_structure
 from distributed_utils.callbacks import BroadcastWeightsCallback
 
+class FirstLastObservationWrapper(ta.ObservationWrapper):
+    def __init__(self, env: ta.Env):
+        super().__init__(env)
+        self.full_observations = {}
+
+    def _convert_obs_to_str(self, player_id: int) -> ta.Observations:
+        return_str = self.full_observations[player_id][0][1]
+        if len(self.full_observations[player_id]) > 1:
+            return_str += "\n\n" + self.full_observations[player_id][-1][1]
+
+        return return_str + "\n\n" #+ "Next Action:"
+
+    def observation(self, player_id: int, observation):
+        if observation is None:
+            return self._convert_obs_to_str(player_id=player_id)
+
+        # Extend the full observations with the current observations without duplicates
+        if player_id not in self.full_observations:
+            self.full_observations[player_id] = []
+
+        # Append new observations in sequence
+        self.full_observations[player_id].extend(observation)
+
+        return self._convert_obs_to_str(player_id=player_id)
+
+
 
 @ray.remote(num_gpus=1)
 class RayActor(VLLMActor):
@@ -59,7 +85,7 @@ class Collector:
 
 
 def make_env(env_id: str):
-    env = ta.make(env_id); env = ta.wrappers.FirstLastObservationWrapper(env)
+    env = ta.make(env_id); env = FirstLastObservationWrapper(env)
     # env = ta.make(env_id); env = ta.wrappers.LLMObservationWrapper(env)
     env.reset(num_players=2); env.state.error_allowance = 0
     return env
@@ -76,6 +102,7 @@ def collect_episode_once(args, player_id: int, buffer, tracker, actor, collector
         formatted_prompt = OBSERVATION_FORMATTING[args.observation_format_template](observation=obs)
         lora_path = ray.get(lora_paths[pid].remote())
         action = ray.get(actor.submit_prompt.remote(prompt=formatted_prompt, lora_path=lora_path))
+        print(action)
         extracted_action, format_feedback = ACTION_EXTRACTION[args.action_extraction_template](raw_action=action) # extract environment action
         done, _ = env.step(action=extracted_action)
 
@@ -233,6 +260,8 @@ def main():
     args = ap.parse_args() 
     args.max_buffer_size = args.batch_size*3
     args = initialize_local_folder_structure(args=args)
+    args.initial_lora_path = os.path.abspath("outputs/sft_lora_4b/checkpoint-3")
+
 
     # build the reward transformations to be used
     final_reward_transformation = retra.ComposeFinalRewardTransforms([

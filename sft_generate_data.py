@@ -69,7 +69,12 @@ def play_episode(args, agent: OpenRouterAgent) -> List[Dict]:
     while not done and steps < args.max_env_steps:
         pid, obs = env.get_observation()
         formatted = OBSERVATION_FORMATTING[args.observation_template](observation=obs)
-        reasoning, answer = agent(obs) 
+        try:
+            reasoning, answer = agent(obs) 
+        except Exception as e:
+            # Abort this game but keep the thread alive
+            print(f"⚠️  Episode aborted: {e}")
+            return records
         print(reasoning, answer)
         done, _ = env.step(action=answer)
         records.append({"observation": obs, "formatted_observation": formatted, "reasoning": reasoning, "answer": answer})
@@ -81,8 +86,8 @@ def cli():
     p.add_argument("--model", default="deepseek/deepseek-r1")
     p.add_argument("--env_id", default="TicTacToe-v0")
     p.add_argument("--outfile", default="data/sft_dataset.jsonl")
-    p.add_argument("--episodes", type=int, default=25)      # number of games
-    p.add_argument("--threads", type=int, default=8)        # thread pool size
+    p.add_argument("--episodes", type=int, default=128)      # number of games
+    p.add_argument("--threads", type=int, default=128)        # thread pool size
     p.add_argument("--max_env_steps", type=int, default=32)
     p.add_argument("--observation_template", default="default")
     p.add_argument("--temperature", type=float, default=0.7)

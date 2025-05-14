@@ -15,7 +15,16 @@ class VLLMActor:
         torch.cuda.set_device(0)
 
         self.args = args
-        engine_args = EngineArgs(model=args.model_name, enable_lora=True, max_loras=2, max_lora_rank=args.lora_rank, max_cpu_loras=2, max_num_seqs=args.max_vllm_seq)
+        engine_args = EngineArgs(
+            model=args.model_name,
+            tokenizer="outputs/sft_lora_4b/checkpoint-3", 
+            enable_lora=True, 
+            max_loras=2, 
+            max_lora_rank=args.lora_rank, 
+            max_cpu_loras=2, 
+            max_num_seqs=args.max_vllm_seq, 
+            tokenizer_mode="slow"
+        )
         self.engine = LLMEngine.from_engine_args(engine_args)
         self.sampling_params = SamplingParams(temperature=args.temperature, top_p=args.top_p, max_tokens=args.max_tokens)
 
