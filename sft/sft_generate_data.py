@@ -1,24 +1,7 @@
-#!/usr/bin/env python
-# collect_sft_dataset.py
-#
-# ⚠️  Requirements
-#   pip install openai ray textarena tqdm
-#   export OPENROUTER_API_KEY="sk-..."
-#
-# Example:
-#   python collect_sft_dataset.py \
-#       --model deepseek-chat \
-#       --env TicTacToe-v0 \
-#       --outfile data/sft_train.jsonl \
-#       --num_actors 4 \
-#       --num_workers 256 \
-#       --max_samples 10000
-
 import os, re, json, argparse, random, pathlib, concurrent.futures
 from typing import List, Dict
 from tqdm import tqdm
 import textarena as ta
-from utils.templates import apply_default_template, OBSERVATION_FORMATTING
 
 
 STANDARD_GAME_PROMPT = "You are Assistant, a large language model playing two-player zero-sum games. Think inside <think></think> tags and output your move in [square brackets]."
@@ -50,7 +33,6 @@ class OpenRouterAgent:
         return reasoning, answer
 
     def __call__(self, observation: str) -> str:
-        prompt = apply_default_template(observation)
         reasoning, answer = self._single_call(observation)
         return reasoning, answer
 
@@ -68,7 +50,6 @@ def play_episode(args, agent: OpenRouterAgent) -> List[Dict]:
     done, steps = False, 0
     while not done and steps < args.max_env_steps:
         pid, obs = env.get_observation()
-        formatted = OBSERVATION_FORMATTING[args.observation_template](observation=obs)
         try:
             reasoning, answer = agent(obs) 
         except Exception as e:
@@ -77,7 +58,7 @@ def play_episode(args, agent: OpenRouterAgent) -> List[Dict]:
             return records
         print(reasoning, answer)
         done, _ = env.step(action=answer)
-        records.append({"observation": obs, "formatted_observation": formatted, "reasoning": reasoning, "answer": answer})
+        records.append({"observation": obs, "reasoning": reasoning, "answer": answer})
         steps += 1
     return records
 
