@@ -1,3 +1,4 @@
+textarena
 wandb
 vllm
 ray>=2.43.0

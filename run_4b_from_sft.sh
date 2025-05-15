@@ -1,16 +1,16 @@
 python3 unstable.py \
     --model_name "Qwen/Qwen3-4B-base" \
     --wandb \
-    --num_actors 2 \
+    --num_actors 7 \
     --num_learners 1 \
-    --lr 1e-4 \
-    --batch_size 384 \
-    --gradient_accumulation_steps 384 \
-    --max_tokens 3000 \
+    --lr 2e-5 \
+    --batch_size 256 \
+    --gradient_accumulation_steps 256 \
+    --max_tokens 4096 \
     --gradient_checkpointing \
     --bf16_training \
-    --num_collection_workers 384 \
-    --num_evaluation_workers 8 \
+    --num_collection_workers 768 \
+    --num_evaluation_workers 12 \
     --lora_rank 32 \
     --lora_alpha 32 \
     --lora_dropout 0 

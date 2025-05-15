@@ -1,4 +1,4 @@
-import os, time, random, argparse, threading
+import os, time, random, argparse, threading, re
 import numpy as np
 from typing import List, Dict
 
@@ -46,7 +46,13 @@ class FirstLastObservationWrapper(ta.ObservationWrapper):
 
         return self._convert_obs_to_str(player_id=player_id)
 
-
+def truncate_after_boxed(raw_text: str) -> str:
+    # Match \boxed{...} including the prefix
+    match = re.search(r"\\boxed\{.*?\}", raw_text)
+    if match:
+        return raw_text[:match.end()]
+    else:
+        return raw_text
 
 @ray.remote(num_gpus=1)
 class RayActor(VLLMActor):
@@ -102,7 +108,9 @@ def collect_episode_once(args, player_id: int, buffer, tracker, actor, collector
         formatted_prompt = OBSERVATION_FORMATTING[args.observation_format_template](observation=obs)
         lora_path = ray.get(lora_paths[pid].remote())
         action = ray.get(actor.submit_prompt.remote(prompt=formatted_prompt, lora_path=lora_path))
-        print(action)
+        # print(action)
+        # extract trunc act
+        action = truncate_after_boxed(action)
         extracted_action, format_feedback = ACTION_EXTRACTION[args.action_extraction_template](raw_action=action) # extract environment action
         done, _ = env.step(action=extracted_action)
 
@@ -260,7 +268,7 @@ def main():
     args = ap.parse_args() 
     args.max_buffer_size = args.batch_size*3
     args = initialize_local_folder_structure(args=args)
-    args.initial_lora_path = os.path.abspath("outputs/sft_lora_4b/checkpoint-3")
+    args.initial_lora_path = os.path.abspath("checkpoint-3")
 
 
     # build the reward transformations to be used
