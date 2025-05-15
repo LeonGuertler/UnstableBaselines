@@ -4,13 +4,13 @@ python3 unstable.py \
     --num_actors 7 \
     --num_learners 1 \
     --lr 2e-5 \
-    --batch_size 256 \
-    --gradient_accumulation_steps 256 \
+    --batch_size 512 \
+    --gradient_accumulation_steps 512 \
     --max_tokens 4096 \
     --gradient_checkpointing \
     --bf16_training \
-    --num_collection_workers 768 \
-    --num_evaluation_workers 12 \
+    --num_collection_workers 512 \
+    --num_evaluation_workers 32 \
     --lora_rank 32 \
     --lora_alpha 32 \
     --lora_dropout 0 

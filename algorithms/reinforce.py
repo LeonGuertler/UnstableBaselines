@@ -2,10 +2,11 @@ import torch
 from algorithms import BaseAlgo
 
 class Reinforce(BaseAlgo):
-    def __init__(self, args, model, tokenizer, device):
+    def __init__(self, args, model, tokenizer, device, ref_model):
         self.ref_model = ref_model 
         self.kl_coef = 0.2 #args.kl_coef if hasattr(args, "kl_coef") else 0.2
         self.ref_model.eval()
+        self.ref_model = self.ref_model.to(device)
         super().__init__(args, model, tokenizer, device)
 
 
