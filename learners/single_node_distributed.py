@@ -33,6 +33,7 @@ def train_loop_per_worker(cfg):
 
     # load base + LoRA
     base = AutoModelForCausalLM.from_pretrained(args.model_name, trust_remote_code=True, torch_dtype=torch.bfloat16)
+    ref_model = base.copy()
     peft_model = build_lora_model(model=base, r=args.lora_rank, alpha=args.lora_alpha, dropout=args.lora_dropout).to(device)
 
     # load initial weights if provided
@@ -43,7 +44,7 @@ def train_loop_per_worker(cfg):
     model = torch.nn.parallel.DistributedDataParallel(peft_model, device_ids=[local_gpu], output_device=local_gpu, find_unused_parameters=False)
     tokenizer = AutoTokenizer.from_pretrained(args.model_name, trust_remote_code=True)
     optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr) # optimizer over only the adapters
-    algo = Reinforce(args, model, tokenizer, device)
+    algo = Reinforce(args, model, tokenizer, device, ref_model)
 
     gpu_batch_size = args.batch_size // world_size
     iteration = 0
