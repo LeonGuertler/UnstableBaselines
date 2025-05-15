@@ -28,6 +28,9 @@ def initialize_local_folder_structure(args):
     os.makedirs(args.output_dir_eval, exist_ok=True)
     os.makedirs(args.output_dir_checkpoints, exist_ok=True)
 
+    # set absolute paths where necessary
+    args.initial_lora_path = os.path.abspath(args.initial_lora_path)
+
     return args
 
 def write_eval_data_to_file(episode_info, filename):

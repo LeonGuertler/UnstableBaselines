@@ -1,10 +1,17 @@
-# python3 unstable.py --wandb --num_actors 2 --num_learners 2 --num_collection_workers 200 --ppo_epochs 1 --normalize_role_advantage --batch_size 64 --gradient_accumulation_steps 32 --max_tokens 2048 --gradient_checkpointing --bf16_training --use_all_data
-
-
-# python3 unstable.py --wandb --num_actors 2 --num_learners 2 --num_collection_workers 1 --ppo_epochs 1 --normalize_role_advantage --batch_size 512 --gradient_accumulation_steps 256 --max_tokens 1500 --gradient_checkpointing --bf16_training --use_all_data
-
-
-
-# python3 unstable.py --wandb --num_actors 2 --num_learners 2 --num_collection_workers 200 --ppo_epochs 1 --normalize_role_advantage --batch_size 512 --gradient_accumulation_steps 256 --max_tokens 1500 --gradient_checkpointing --bf16_training --use_all_data
-# python3 unstable.py --wandb --num_actors 2 --num_learners 1 --num_collection_workers 512 --ppo_epochs 1 --normalize_role_advantage --batch_size 128 --gradient_accumulation_steps 128 --max_tokens 4096 --gradient_checkpointing --bf16_training --use_all_data
-python3 unstable.py --wandb --num_actors 2 --num_learners 1 --num_collection_workers 512 --ppo_epochs 1 --normalize_role_advantage --batch_size 128 --gradient_accumulation_steps 128 --max_tokens 4096 --gradient_checkpointing --bf16_training --use_all_data
+python3 unstable.py \
+    --model_name "Qwen/Qwen3-4B-base" \
+    --wandb \
+    --num_actors 7 \
+    --num_learners 1 \
+    --lr 2e-5 \
+    --batch_size 512 \
+    --gradient_accumulation_steps 512 \
+    --max_tokens 4096 \
+    --gradient_checkpointing \
+    --bf16_training \
+    --num_collection_workers 512 \
+    --num_evaluation_workers 32 \
+    --lora_rank 32 \
+    --lora_alpha 32 \
+    --lora_dropout 0 \
+    --initial_lora_path "checkpoint-3"

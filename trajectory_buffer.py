@@ -20,30 +20,24 @@ class Step:
 
 @ray.remote
 class StepBuffer:
-    def __init__(
-        self, args, 
-        final_reward_transformation: Optional[Callable]=None,
-        step_reward_transformation: Optional[Callable]=None,
-        sampling_reward_transformation: Optional[Callable]=None
-    ):
+    def __init__(self, args, final_reward_transformation: Optional[Callable]=None, step_reward_transformation: Optional[Callable]=None, sampling_reward_transformation: Optional[Callable]=None):
         self.args = args
         self.final_reward_transformation = final_reward_transformation
         self.step_reward_transformation = step_reward_transformation
         self.sampling_reward_transformation = sampling_reward_transformation
 
         self.steps: List[Step] = []
-        self.training_steps = 0; self.total_train_samples = 0
-
+        self.training_steps = 0
 
     def add_trajectory(self, trajectory: Trajectory, current_checkpoint_pid: Optional[int] = None):
         transformed_rewards = self.final_reward_transformation(trajectory.final_rewards) # apply final rewards transformations
         n = len(trajectory.pid)
         for i in range(n):
-            reward = transformed_rewards[trajectory.pid[i]]
-            step_reward = self.step_reward_transformation(trajectory=trajectory, step_index=i, base_reward=reward) # apply step reward transformations
-            self.steps.append(Step(pid=trajectory.pid[i], obs=trajectory.obs[i], act=trajectory.actions[i], reward=step_reward))
+            if current_checkpoint_pid==trajectory.pid[i] or self.args.use_all_data:
+                reward = transformed_rewards[trajectory.pid[i]]
+                step_reward = self.step_reward_transformation(trajectory=trajectory, step_index=i, base_reward=reward) # apply step reward transformations
+                self.steps.append(Step(pid=trajectory.pid[i], obs=trajectory.obs[i], act=trajectory.actions[i], reward=step_reward))
         print(f"BUFFER SIZE: {len(self.steps)}, added {n} steps")
-
 
         excess_num_samples = len(self.steps) - self.args.max_buffer_size
         if excess_num_samples > 0:
@@ -56,14 +50,10 @@ class StepBuffer:
         for b in batch:
             self.steps.remove(b)
         batch = self.sampling_reward_transformation(batch) # apply sampling reward transformations
-
         if self.args.log_training_data: # store training data as csv file
             filename = os.path.join(self.args.output_dir_train, f"train_data_step_{self.training_steps}.csv")
             write_training_data_to_file(batch=batch, filename=filename)
-
-        # info for logging
         self.training_steps += 1
-        self.total_train_samples += batch_size
         return batch
 
     def size(self) -> int:
@@ -77,61 +67,24 @@ class StepBuffer:
 class WandBTracker:
     def __init__(self, args):
         self.args = args 
-        self.tau = args.ema_tau
         self.ma_range = args.ma_range
 
         self.wandb_name = args.wandb_name 
         wandb.init(project=args.wandb_project_name, name=self.wandb_name, config=args)
-
-        # Metric containers
-        self.ema_metrics = {}
-        self.ma_metrics = {}
-
-        self.ema_metrics_eval = {}
-        self.ma_metrics_eval = {}
-
-        # Core counters
-        self.eval_ep_count = 0
-        self.num_trajectories = 0
+        self.ma_metrics = {"collection": {}, "evaluation": {}} # Metric containers
+        self.eval_ep_count = 0; self.num_trajectories = 0 # Core counters
 
     def update_metric(self, name, value, prefix):
-        if prefix == "collection":
-            self.ema_metrics[name] = (1 - self.tau) * self.ema_metrics.get(name, 0.0) + self.tau * value # EMA
-            if name not in self.ma_metrics: # MA
-                self.ma_metrics[name] = deque(maxlen=self.ma_range) 
-            self.ma_metrics[name].append(value)
-        elif prefix == "eval":
-            self.ema_metrics_eval[name] = (1 - self.tau) * self.ema_metrics_eval.get(name, 0.0) + self.tau * value # EMA
-            if name not in self.ma_metrics_eval: # MA
-                self.ma_metrics_eval[name] = deque(maxlen=self.ma_range) 
-            self.ma_metrics_eval[name].append(value)
-
-
+        if name not in self.ma_metrics[prefix]:
+            self.ma_metrics[prefix][name] = deque(maxlen=self.ma_range)
+        self.ma_metrics[prefix][name].append(value)
 
     def log_metrics(self, prefix):
-        ema_tag = f"{prefix} (EMA - tau={self.tau})"
         ma_tag  = f"{prefix} (MA - range={self.ma_range})"
-        wandb_dict = {}
-
-        if prefix=="collection":
-            for k in self.ema_metrics:
-                wandb_dict[f"{ema_tag}/{k}"] = self.ema_metrics[k]
-            for k in self.ma_metrics:
-                if self.ma_metrics[k]:
-                    wandb_dict[f"{ma_tag}/{k}"] = sum(self.ma_metrics[k]) / len(self.ma_metrics[k])
-            wandb_dict[f"{ema_tag}/Num Trajectories"] = self.num_trajectories
-            wandb_dict[f"{ma_tag}/Num Trajectories"] = self.num_trajectories
-
-        elif prefix=="eval":
-            for k in self.ema_metrics_eval:
-                wandb_dict[f"{ema_tag}/{k}"] = self.ema_metrics_eval[k]
-            for k in self.ma_metrics_eval:
-                if self.ma_metrics_eval[k]:
-                    wandb_dict[f"{ma_tag}/{k}"] = sum(self.ma_metrics_eval[k]) / len(self.ma_metrics_eval[k])
-            wandb_dict[f"{ema_tag}/Num Games"] = self.eval_ep_count
-            wandb_dict[f"{ma_tag}/Num Games"] = self.eval_ep_count
-
-
+        wandb_dict = {f"{ma_tag}/Num Trajectories": self.num_trajectories if prefix=="collection" else self.eval_ep_count}
+        for name in self.ma_metrics[prefix]:
+            if self.ma_metrics[prefix][name]:
+                wandb_dict[f"{ma_tag}/{name}"] = sum(self.ma_metrics[prefix][name]) / len(self.ma_metrics[prefix][name])
         wandb.log(wandb_dict)
 
     def add_eval_episode(self, episode_info: list, final_reward: dict, current_ckpt_pid: int):
@@ -147,18 +100,15 @@ class WandBTracker:
 
         # Update outcome metrics
         for metric in ["Win Rate", "Loss Rate", "Draw Rate"]:
-            self.update_metric(metric, int(metric == outcome_metric), "eval")
-        self.update_metric("Game Length", len(episode_info), "eval") # Turn count
+            self.update_metric(metric, int(metric == outcome_metric), "evaluation")
+        self.update_metric("Game Length", len(episode_info), "evaluation") # Turn count
 
         # Save CSV
-        self.log_metrics("eval")
+        self.log_metrics("evaluation")
         if episode_info:
             filename = os.path.join(self.args.output_dir_eval, f"episode-{self.eval_ep_count}-{outcome_metric.split()[0].lower()}.csv")
             write_eval_data_to_file(episode_info=episode_info, filename=filename)
-            try:
-                wandb.save(filename)
-            except Exception as exc:
-                print(f"Exception when pushing eval details to wandb: {exc}")
+            wandb.save(filename)
         self.eval_ep_count += 1
 
     def add_trajectory(self, trajectory: Trajectory, current_checkpoint_pid: int):
@@ -176,12 +126,9 @@ class WandBTracker:
         # Game structure
         n_turns = len(trajectory.pid)
         self.update_metric("Game Length", n_turns, "collection")
-
         for i in range(n_turns):
             self.update_metric("Format Success Rate", int(trajectory.format_feedbacks[i]["has_think"]), "collection")
             self.update_metric("Format Invalid Move Rate", int(trajectory.format_feedbacks[i]["invalid_move"]), "collection")
             self.update_metric("Response Length (avg char)", len(trajectory.actions[i]), "collection")
-
         self.num_trajectories += 1
-        # print("Trying to log collection metrics")
         self.log_metrics("collection")

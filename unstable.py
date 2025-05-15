@@ -1,4 +1,4 @@
-import os, time, random, argparse, threading, re
+import os, time, random, argparse, threading
 import numpy as np
 from typing import List, Dict
 
@@ -19,40 +19,10 @@ from trajectory_buffer import Trajectory, Step, StepBuffer, WandBTracker
 from utils.resources import validate_requested_gpus, reserve_resources_for_learners
 from utils.templates import OBSERVATION_FORMATTING, ACTION_EXTRACTION
 from utils.local_files import initialize_local_folder_structure
-from distributed_utils.callbacks import BroadcastWeightsCallback
+from utils.local_textarena_modules import FirstLastObservationWrapper
+from utils.misc import truncate_after_boxed
 
-class FirstLastObservationWrapper(ta.ObservationWrapper):
-    def __init__(self, env: ta.Env):
-        super().__init__(env)
-        self.full_observations = {}
 
-    def _convert_obs_to_str(self, player_id: int) -> ta.Observations:
-        return_str = self.full_observations[player_id][0][1]
-        if len(self.full_observations[player_id]) > 1:
-            return_str += "\n\n" + self.full_observations[player_id][-1][1]
-
-        return return_str + "\n\n" #+ "Next Action:"
-
-    def observation(self, player_id: int, observation):
-        if observation is None:
-            return self._convert_obs_to_str(player_id=player_id)
-
-        # Extend the full observations with the current observations without duplicates
-        if player_id not in self.full_observations:
-            self.full_observations[player_id] = []
-
-        # Append new observations in sequence
-        self.full_observations[player_id].extend(observation)
-
-        return self._convert_obs_to_str(player_id=player_id)
-
-def truncate_after_boxed(raw_text: str) -> str:
-    # Match \boxed{...} including the prefix
-    match = re.search(r"\\boxed\{.*?\}", raw_text)
-    if match:
-        return raw_text[:match.end()]
-    else:
-        return raw_text
 
 @ray.remote(num_gpus=1)
 class RayActor(VLLMActor):
@@ -63,11 +33,8 @@ class RayActor(VLLMActor):
 class Collector:
     def __init__(self, args): 
         self.args = args
-        self.p0_lora_path: Optional[str] = args.initial_lora_path
-        self.p1_lora_path: Optional[str] = args.initial_lora_path
-
         self.actor_group: List[ray.actor.ActorHandle] = []
-        self.current_group_id = 0
+        self.lora_paths: List[Optional[str]] = [args.initial_lora_path]
 
     def initialize(self, num_actors: int):
         self.actor_group = [RayActor.remote(self.args) for _ in range(num_actors)]
@@ -76,26 +43,29 @@ class Collector:
         return random.choice(self.actor_group)
 
     def get_current_lora(self):
-        return self.p0_lora_path if self.current_group_id==0 else self.p1_lora_path
+        return self.lora_paths[-1]
     
     def get_previous_lora(self):
-        return self.p0_lora_path if self.current_group_id==1 else self.p1_lora_path
-
-    def set_new_lora_paths(self, new_path: str):
-        if self.current_group_id == 0:
-            self.p1_lora_path = new_path
-            self.current_group_id = 1
+        if len(self.lora_paths) > self.args.self_play_opponent_lag:
+            return self.lora_paths[-self.args.self_play_opponent_lag]
         else:
-            self.p0_lora_path = new_path
-            self.current_group_id = 0
+            return self.lora_paths[0]
+
+    def get_random_lora(self):
+        # get random lora weights from within the opponent delay window
+        if len(self.lora_paths) > self.args.self_play_opponent_lag:
+            return random.choice(self.lora_paths[:-self.args.self_play_opponent_lag])
+        else:
+            return self.lora_paths[0]
+
+    def add_new_lora_paths(self, new_path: str):
+        self.lora_paths.append(new_path)
 
 
 def make_env(env_id: str):
     env = ta.make(env_id); env = FirstLastObservationWrapper(env)
-    # env = ta.make(env_id); env = ta.wrappers.LLMObservationWrapper(env)
     env.reset(num_players=2); env.state.error_allowance = 0
     return env
-
 
 @ray.remote(num_cpus=0.1)
 def collect_episode_once(args, player_id: int, buffer, tracker, actor, collector):
@@ -103,18 +73,15 @@ def collect_episode_once(args, player_id: int, buffer, tracker, actor, collector
     traj = Trajectory()
     done, steps = False, 0
     lora_paths = {player_id: collector.get_current_lora, 1-player_id: collector.get_previous_lora}
+    fixed_opponent = ta.agents.OpenRouterAgent(model_name=args.eval_model_name)
     while not done and steps < args.max_env_steps:
         pid, obs = env.get_observation()
         formatted_prompt = OBSERVATION_FORMATTING[args.observation_format_template](observation=obs)
         lora_path = ray.get(lora_paths[pid].remote())
         action = ray.get(actor.submit_prompt.remote(prompt=formatted_prompt, lora_path=lora_path))
-        # print(action)
-        # extract trunc act
-        action = truncate_after_boxed(action)
+        action = truncate_after_boxed(action) # extract trunc act
         extracted_action, format_feedback = ACTION_EXTRACTION[args.action_extraction_template](raw_action=action) # extract environment action
         done, _ = env.step(action=extracted_action)
-
-        # add all data to trajectory (TODO perhaps give user a bit more control here)
         traj.pid.append(pid)
         traj.obs.append(formatted_prompt)
         traj.actions.append(action)
@@ -239,6 +206,7 @@ def main():
     ap.add_argument("--max_tokens", type=int, default=2048)
     ap.add_argument("--observation_format_template", type=str, default="default")
     ap.add_argument("--action_extraction_template", type=str, default="default")
+    ap.add_argument("--use_all_data", type=bool, default=False, help="Whether to use traces from both players or only the current player")
 
     # eval params
     ap.add_argument("--eval_env_id", default="TicTacToe-v0")
@@ -254,7 +222,7 @@ def main():
     # wandb & tracking params
     ap.add_argument("--wandb", action="store_true") 
     ap.add_argument("--wandb_project_name", type=str, default="UnstableBaselines")
-    ap.add_argument("--ema_tau", type=float, default=0.01)
+    # ap.add_argument("--ema_tau", type=float, default=0.01)
     ap.add_argument("--ma_range", type=int, default=100)
 
 
@@ -263,12 +231,12 @@ def main():
     ap.add_argument("--lora_alpha", type=int, default=32)
     ap.add_argument("--lora_dropout", type=int, default=0.0)
     ap.add_argument("--initial_lora_path", type=str, default=None)
+    ap.add_argument("--vllm_max_loras", type=int, default=4)
 
 
     args = ap.parse_args() 
-    args.max_buffer_size = args.batch_size*3
+    args.max_buffer_size = args.batch_size*3 # default TODO maybe move at some point
     args = initialize_local_folder_structure(args=args)
-    args.initial_lora_path = os.path.abspath("checkpoint-3")
 
 
     # build the reward transformations to be used
@@ -285,7 +253,7 @@ def main():
     ])
 
     # check whether the gpu counts are correct
-    total_gpus, total_cpus = validate_requested_gpus(args=args)
+    total_gpus, _ = validate_requested_gpus(args=args)
     ray.init(num_gpus=total_gpus)
 
     buffer = StepBuffer.remote(
@@ -295,16 +263,18 @@ def main():
         sampling_reward_transformation=sampling_reward_transformation
     )
 
-    scaling_config=ScalingConfig(num_workers=args.num_learners, use_gpu=True, resources_per_worker={"CPU": 2})
     tracker = WandBTracker.remote(args=args)
     collector = Collector.remote(args=args)
     ray.get(collector.initialize.remote(num_actors=args.num_actors))
     start_actor_loop(args=args, collector=collector, buffer=buffer, tracker=tracker)
 
-    root_dir = os.getcwd()
-    train_loop_config = {"args": args, "buffer": buffer, "collector": collector}
-    run_config = RunConfig(storage_path=root_dir)
-    trainer = TorchTrainer(train_loop_per_worker=train_loop_per_worker, scaling_config=scaling_config, train_loop_config=train_loop_config, run_config=run_config)
+    trainer = TorchTrainer(
+        train_loop_per_worker=train_loop_per_worker, 
+        scaling_config=ScalingConfig(num_workers=args.num_learners, use_gpu=True, resources_per_worker={"CPU": 2}), 
+        train_loop_config={"args": args, "buffer": buffer, "collector": collector}, 
+        run_config=RunConfig(storage_path=os.path.join(os.getcwd(), args.output_dir_checkpoints))
+    )
+    
     threading.Thread(target=trainer.fit, daemon=True).start() # Start training in a background thread so the driver can keep running.
 
 

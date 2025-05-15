@@ -3,7 +3,7 @@ from ray.train import get_context
 from ray.air import session
 from ray.train import Checkpoint
 from transformers import AutoModelForCausalLM, AutoTokenizer
-from learners.lora_utils import build_lora_model, lora_state_dict, load_lora_state
+from learners.lora_utils import build_lora_model, load_lora_state
 from peft import get_peft_model_state_dict, set_peft_model_state_dict
 
 # local imports
@@ -14,7 +14,7 @@ from algorithms import Reinforce, PPO
 def train_loop_per_worker(cfg):
     args = cfg["args"]; buffer = cfg["buffer"]; collector = cfg["collector"]
     # init wandb
-    wandb.init(project=args.wandb_project_name, name=args.wandb_name, config=args)
+    wandb.init(project=args.wandb_project_name, name=f"{args.wandb_name} (learner)", config=args)
 
     root_dir = os.getcwd()
     root_checkpoint_dir = os.path.join(root_dir, args.output_dir_checkpoints)
@@ -81,7 +81,7 @@ def train_loop_per_worker(cfg):
             os.makedirs(checkpoint_folder_path, exist_ok=True)
             peft_model = model.module if isinstance(model, torch.nn.parallel.DistributedDataParallel) else model
             peft_model.save_pretrained(checkpoint_folder_path)
-            ray.get(collector.set_new_lora_paths.remote(checkpoint_folder_path))
+            ray.get(collector.add_new_lora_paths.remote(checkpoint_folder_path))
             session.report({"iteration": iteration})
         iteration += 1
 
