@@ -1,9 +1,9 @@
-import torch 
+import torch, copy
 from algorithms import BaseAlgo
 
 class Reinforce_KL(BaseAlgo):
-    def __init__(self, args, model, tokenizer, device, ref_model):
-        self.ref_model = ref_model 
+    def __init__(self, args, model, tokenizer, device):
+        self.ref_model = copy.deepcopy(model)
         self.kl_coef = 0.2 
         self.ref_model.eval()
         self.ref_model = self.ref_model.to(device)

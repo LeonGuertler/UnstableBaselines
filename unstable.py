@@ -170,10 +170,13 @@ def start_actor_loop(args, collector, buffer, tracker):
     thread.start()
 
 
-
+def parse_eval_env_id(arg): # If passed as a comma-separated string, split it
+    if ',' in arg:
+        return arg.split(',')
+    return arg
 
 def main():
-    # TODO clean up passed arguments
+    # base args
     ap = argparse.ArgumentParser()
     ap.add_argument("--model_name", default="Qwen/Qwen3-0.6B")
     ap.add_argument("--batch_size", type=int, default=512)
@@ -199,17 +202,21 @@ def main():
     ap.add_argument("--max_vllm_seq", type=int, default=384)
 
     # collection params
-    ap.add_argument("--train_env_id", default="TicTacToe-v0")
+    # ap.add_argument("--train_env_id", default="TicTacToe-v0")
+    # ap.add_argument("--train_env_id", default="TicTacToe-v0")
+    ap.add_argument("--train_env_id", type=parse_eval_env_id, default="TicTacToe-v0", help="Single env as string or multiple envs as comma-separated string")
     ap.add_argument("--max_env_steps", type=int, default=32)
     ap.add_argument("--temperature", type=float, default=0.7)
     ap.add_argument("--top_p", type=float, default=0.95)
     ap.add_argument("--max_tokens", type=int, default=2048)
     ap.add_argument("--observation_format_template", type=str, default="default")
     ap.add_argument("--action_extraction_template", type=str, default="default")
+    ap.add_argument("--self_play_opponent_lag", type=int, default=7)
     ap.add_argument("--use_all_data", type=bool, default=False, help="Whether to use traces from both players or only the current player")
 
     # eval params
-    ap.add_argument("--eval_env_id", default="TicTacToe-v0")
+    ap.add_argument("--eval_env_id", type=parse_eval_env_id, default="TicTacToe-v0", help="Single env as string or multiple envs as comma-separated string")
+    # ap.add_argument("--eval_env_id", default="TicTacToe-v0")
     ap.add_argument("--max_env_steps_eval", type=int, default=64)
     ap.add_argument("--eval_model_name", type=str, default="google/gemini-2.0-flash-lite-001")
 
@@ -300,3 +307,6 @@ if __name__ == "__main__":
 
 
 # TODO optimize by grouping same lora paths to same gpus
+
+
+# TODO add better reward stats

@@ -1,4 +1,4 @@
-import ray, torch, os, time, wandb, pathlib, copy
+import ray, torch, os, time, wandb
 from ray.train import get_context
 from ray.air import session
 from ray.train import Checkpoint
@@ -13,8 +13,7 @@ from algorithms import Reinforce, PPO
 
 def train_loop_per_worker(cfg):
     args = cfg["args"]; buffer = cfg["buffer"]; collector = cfg["collector"]
-    # init wandb
-    wandb.init(project=args.wandb_project_name, name=f"{args.wandb_name} (learner)", config=args)
+    wandb.init(project=args.wandb_project_name, name=f"{args.wandb_name} (learner)", config=args) # init wandb
 
     root_dir = os.getcwd()
     root_checkpoint_dir = os.path.join(root_dir, args.output_dir_checkpoints)
@@ -33,7 +32,6 @@ def train_loop_per_worker(cfg):
 
     # load base + LoRA
     base = AutoModelForCausalLM.from_pretrained(args.model_name, trust_remote_code=True, torch_dtype=torch.bfloat16)
-    ref_model = copy.deepcopy(base)
     peft_model = build_lora_model(model=base, r=args.lora_rank, alpha=args.lora_alpha, dropout=args.lora_dropout).to(device)
 
     # load initial weights if provided
@@ -44,7 +42,7 @@ def train_loop_per_worker(cfg):
     model = torch.nn.parallel.DistributedDataParallel(peft_model, device_ids=[local_gpu], output_device=local_gpu, find_unused_parameters=False)
     tokenizer = AutoTokenizer.from_pretrained(args.model_name, trust_remote_code=True)
     optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr) # optimizer over only the adapters
-    algo = Reinforce(args, model, tokenizer, device, ref_model)
+    algo = Reinforce(args, model, tokenizer, device)
 
     gpu_batch_size = args.batch_size // world_size
     iteration = 0
