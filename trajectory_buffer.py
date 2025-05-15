@@ -71,25 +71,28 @@ class WandBTracker:
 
         self.wandb_name = args.wandb_name 
         wandb.init(project=args.wandb_project_name, name=self.wandb_name, config=args)
-        self.ma_metrics = {"collection": {}, "evaluation": {}} # Metric containers
+        self.metrics = {} #{"collection": {}, "evaluation": {}} # Metric containers
         self.eval_ep_count = 0; self.num_trajectories = 0 # Core counters
 
-    def update_metric(self, name, value, prefix):
-        if name not in self.ma_metrics[prefix]:
-            self.ma_metrics[prefix][name] = deque(maxlen=self.ma_range)
-        self.ma_metrics[prefix][name].append(value)
+    def update_metric(self, name, value, prefix, env_id):
+        if env_id not in self.metrics:
+            self.metrics[env_id] = {"collection": {}, "evaluation": {}}
+        if name not in self.metrics[env_id][prefix]:
+            self.metrics[env_id][prefix][name] = deque(maxlen=self.ma_range)
+        self.metrics[env_id][prefix][name].append(value)
 
     def log_metrics(self, prefix):
-        ma_tag  = f"{prefix} (MA - range={self.ma_range})"
-        wandb_dict = {f"{ma_tag}/Num Trajectories": self.num_trajectories if prefix=="collection" else self.eval_ep_count}
-        for name in self.ma_metrics[prefix]:
-            if self.ma_metrics[prefix][name]:
-                wandb_dict[f"{ma_tag}/{name}"] = sum(self.ma_metrics[prefix][name]) / len(self.ma_metrics[prefix][name])
-        wandb.log(wandb_dict)
+        for env_id in self.metrics:
+            ma_tag  = f"{prefix} '{env_id}' (MA - range={self.ma_range})"
+            wandb_dict = {f"{ma_tag}/Num Trajectories": self.num_trajectories if prefix=="collection" else self.eval_ep_count}
+            for name in self.metrics[env_id][prefix]:
+                if self.metrics[env_id][prefix][name]:
+                    wandb_dict[f"{ma_tag}/{name}"] = sum(self.metrics[env_id][prefix][name]) / len(self.metrics[env_id][prefix][name])
+            wandb.log(wandb_dict)
 
-    def add_eval_episode(self, episode_info: list, final_reward: dict, current_ckpt_pid: int):
+    def add_eval_episode(self, episode_info: list, final_reward: dict, current_ckpt_pid: int, env_id: str):
         reward_current = final_reward[current_ckpt_pid]
-        reward_other = final_reward[1 - current_ckpt_pid]
+        reward_other = final_reward[1-current_ckpt_pid]
 
         # Determine outcome
         outcome_metric = "Draw Rate"
@@ -100,8 +103,8 @@ class WandBTracker:
 
         # Update outcome metrics
         for metric in ["Win Rate", "Loss Rate", "Draw Rate"]:
-            self.update_metric(metric, int(metric == outcome_metric), "evaluation")
-        self.update_metric("Game Length", len(episode_info), "evaluation") # Turn count
+            self.update_metric(metric, int(metric == outcome_metric), "evaluation", env_id)
+        self.update_metric("Game Length", len(episode_info), "evaluation", env_id) # Turn count
 
         # Save CSV
         self.log_metrics("evaluation")
@@ -111,24 +114,24 @@ class WandBTracker:
             wandb.save(filename)
         self.eval_ep_count += 1
 
-    def add_trajectory(self, trajectory: Trajectory, current_checkpoint_pid: int):
+    def add_trajectory(self, trajectory: Trajectory, current_checkpoint_pid: int, env_id: str):
         raw_current = trajectory.final_rewards[current_checkpoint_pid]
-        raw_prev = trajectory.final_rewards[1 - current_checkpoint_pid]
+        raw_prev = trajectory.final_rewards[1-current_checkpoint_pid]
 
         # Outcome
-        self.update_metric("Win Rate",  int(raw_current > raw_prev), "collection")
-        self.update_metric("Loss Rate", int(raw_current < raw_prev), "collection")
-        self.update_metric("Draw Rate", int(raw_current == raw_prev), "collection")
+        self.update_metric("Win Rate",  int(raw_current > raw_prev), "collection", env_id)
+        self.update_metric("Loss Rate", int(raw_current < raw_prev), "collection", env_id)
+        self.update_metric("Draw Rate", int(raw_current == raw_prev), "collection", env_id)
 
         # Invalid game
-        self.update_metric("Invalid Move Rate", int(list(trajectory.final_rewards.values()) in [[0,-1], [-1,0]]), "collection")
+        self.update_metric("Invalid Move Rate", int(list(trajectory.final_rewards.values()) in [[0,-1], [-1,0]]), "collection", env_id)
 
         # Game structure
         n_turns = len(trajectory.pid)
-        self.update_metric("Game Length", n_turns, "collection")
+        self.update_metric("Game Length", n_turns, "collection", env_id)
         for i in range(n_turns):
-            self.update_metric("Format Success Rate", int(trajectory.format_feedbacks[i]["has_think"]), "collection")
-            self.update_metric("Format Invalid Move Rate", int(trajectory.format_feedbacks[i]["invalid_move"]), "collection")
-            self.update_metric("Response Length (avg char)", len(trajectory.actions[i]), "collection")
+            self.update_metric("Format Success Rate", int(trajectory.format_feedbacks[i]["has_think"]), "collection", env_id)
+            self.update_metric("Format Invalid Move Rate", int(trajectory.format_feedbacks[i]["invalid_move"]), "collection", env_id)
+            self.update_metric("Response Length (avg char)", len(trajectory.actions[i]), "collection", env_id)
         self.num_trajectories += 1
         self.log_metrics("collection")

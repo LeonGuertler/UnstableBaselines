@@ -65,11 +65,11 @@ class Collector:
 def make_env(env_id: str):
     env = ta.make(env_id); env = FirstLastObservationWrapper(env)
     env.reset(num_players=2); env.state.error_allowance = 0
-    return env
+    return env, env.env_id
 
 @ray.remote(num_cpus=0.1)
 def collect_episode_once(args, player_id: int, buffer, tracker, actor, collector):
-    env = make_env(env_id=args.train_env_id)
+    env, env_id = make_env(env_id=args.train_env_id)
     traj = Trajectory()
     done, steps = False, 0
     lora_paths = {player_id: collector.get_current_lora, 1-player_id: collector.get_previous_lora}
@@ -100,12 +100,12 @@ def collect_episode_once(args, player_id: int, buffer, tracker, actor, collector
     traj.num_turns = steps
     print(f"GAME FINISHED< ADDING TO BUFFER. num steps: {steps}")
     ray.get(buffer.add_trajectory.remote(traj, current_checkpoint_pid=player_id))
-    ray.get(tracker.add_trajectory.remote(traj, current_checkpoint_pid=player_id))
+    ray.get(tracker.add_trajectory.remote(traj, current_checkpoint_pid=player_id, env_id=env_id))
 
 
 @ray.remote(num_cpus=0.1)
 def run_eval_episode(args, player_id: int, tracker, actor, collector):
-    env = make_env(env_id=args.eval_env_id)
+    env, env_id = make_env(env_id=args.eval_env_id)
 
     episode_info = []
     done, steps = False, 0
@@ -135,7 +135,7 @@ def run_eval_episode(args, player_id: int, tracker, actor, collector):
         episode_info.append(step_info)
         steps += 1
     # store the full episode in a csv file
-    ray.get(tracker.add_eval_episode.remote(episode_info=episode_info, final_reward=env.close() if done else {0:0, 1:0}, current_ckpt_pid=player_id))
+    ray.get(tracker.add_eval_episode.remote(episode_info=episode_info, final_reward=env.close() if done else {0:0, 1:0}, current_ckpt_pid=player_id, env_id=env_id))
 
 # todo add logging for the number of train env eval currently running
 def start_actor_loop(args, collector, buffer, tracker):
