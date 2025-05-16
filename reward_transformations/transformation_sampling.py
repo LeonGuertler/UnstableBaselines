@@ -29,7 +29,7 @@ class NormalizeRewards(SamplingRewardTransform):
         std = np.std(rewards) + 1e-8  # avoid divide-by-zero
 
         for step in steps:
-            step.reward = (step.reward - mean) / std
+            step.reward = (step.reward - mean) #/ std
         return steps
 
 
