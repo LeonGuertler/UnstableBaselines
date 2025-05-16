@@ -29,8 +29,8 @@ class StepBuffer:
         self.steps: List[Step] = []
         self.training_steps = 0
 
-    def add_trajectory(self, trajectory: Trajectory, current_checkpoint_pid: Optional[int] = None):
-        transformed_rewards = self.final_reward_transformation(trajectory.final_rewards) # apply final rewards transformations
+    def add_trajectory(self, trajectory: Trajectory, env_id: str, current_checkpoint_pid: Optional[int]):
+        transformed_rewards = self.final_reward_transformation(trajectory.final_rewards, env_id=env_id) # apply final rewards transformations
         n = len(trajectory.pid)
         for i in range(n):
             if current_checkpoint_pid==trajectory.pid[i] or self.args.use_all_data:
@@ -68,11 +68,12 @@ class WandBTracker:
     def __init__(self, args):
         self.args = args 
         self.ma_range = args.ma_range
+        self.ma_range_all = 1000
 
         self.wandb_name = args.wandb_name 
         wandb.init(project=args.wandb_project_name, name=self.wandb_name, config=args)
-        self.metrics = {"collection": {}, "evaluation": {}} # Metric containers
-        self.eval_ep_count = {}; self.num_trajectories = {} # Core counters
+        self.metrics = {"collection": {"all": {}}, "evaluation": {"all": {}}} # Metric containers
+        self.eval_ep_count = {"all":0}; self.num_trajectories = {"all":0} # Core counters
         self.std_metrics = ["Player Rewards", "Game Length"]
 
     def update_metric(self, name, value, prefix, env_id):
@@ -82,9 +83,14 @@ class WandBTracker:
             self.metrics[prefix][env_id][name] = deque(maxlen=self.ma_range)
         self.metrics[prefix][env_id][name].append(value)
 
+        if name not in self.metrics[prefix]["all"]:
+            self.metrics[prefix]["all"][name] = deque(maxlen=self.ma_range_all)
+        self.metrics[prefix]["all"][name].append(value)
+
     def log_metrics(self, prefix):
         for env_id in self.metrics[prefix]:
-            ma_tag  = f"{prefix} '{env_id}' (MA - range={self.ma_range})"
+            ma_range = self.ma_range_all if env_id=="all" else self.ma_range
+            ma_tag  = f"{prefix} '{env_id}' (MA - range={ma_range})"
             wandb_dict = {f"{ma_tag}/Num Trajectories": self.num_trajectories[env_id] if prefix=="collection" else self.eval_ep_count[env_id]}
             for name in self.metrics[prefix][env_id]:
                 if self.metrics[prefix][env_id][name]:
@@ -112,10 +118,13 @@ class WandBTracker:
         # Save CSV
         self.log_metrics("evaluation")
         if episode_info:
-            filename = os.path.join(self.args.output_dir_eval, f"{env_id}-episode-{self.eval_ep_count[env_id]}-{outcome_metric.split()[0].lower()}.csv")
+            foldername = os.path.join(self.args.output_dir_eval, env_id)
+            os.makedirs(foldername, exist_ok=True)
+            filename = os.path.join(foldername, f"episode-{self.eval_ep_count[env_id]}-{outcome_metric.split()[0].lower()}.csv")
             write_eval_data_to_file(episode_info=episode_info, filename=filename)
             wandb.save(filename)
         self.eval_ep_count[env_id] += 1
+        self.eval_ep_count["all"] += 1
 
     def add_trajectory(self, trajectory: Trajectory, current_checkpoint_pid: int, env_id: str):
         if env_id not in self.num_trajectories: self.num_trajectories[env_id] = 0
@@ -138,4 +147,5 @@ class WandBTracker:
                 self.update_metric("Format Invalid Move Rate", int(trajectory.format_feedbacks[i]["invalid_move"]), "collection", env_id)
                 self.update_metric("Response Length (avg char)", len(trajectory.actions[i]), "collection", env_id)
         self.num_trajectories[env_id] += 1
+        self.num_trajectories["all"] += 1
         self.log_metrics("collection")

@@ -3,8 +3,6 @@
 
 
 
-`bash run_24gb.sh` should work on 4090s (default is 2gpus for collection 1 for training) 
-
 # TODOs
 
 <!-- - make num train gpus more flexible (i.e. 1-n) -->
@@ -25,21 +23,31 @@
         -> maybe get the algo to return a dict of stuff worth tracking -->
 <!-- - maybe allow for uneven number of actor gpus -->
 <!-- - training and vllm inf with hot-swapped LoRA weights (https://docs.vllm.ai/en/stable/features/lora.html -> doesn't seem hard and given the recent papers on this super worth doing) -->
+<!-- - split output dir by date, then time -->
+<!-- - track reward sd (echo trap) -->
+<!-- - fix where the lora weights end up -->
 
 
-- maybe dynamically adjust the number of gpus used for training/collection
+### TODO:
+1. proper checkpointing (with strategy) [done; requires testing]
+2. average results for collection and eval  [done; requires testing]
+3. role advantage estimation by environment  [done; requires testing]
+4. multi-gpu TorchTrainer
+5. seperate the logs for everything (and actually log to files) for easier debuggin
+6. all the necessary asserts 
+7. Play against n-a; n-b checkpoints (randomly selected)   [done; requires testing]
+8. Organize .sh scripts
+9. split output folders (esp eval) [done; requires testing]
+
+
 - store specific checkpoints
-- track reward sd (echo trap)
 - fix multi-gpu training
-- split output dir by date, then time
-- fix where the lora weights end up
-
 
 KIV:
 - track time per complete episode
 - track time per turn
 - track time per generated char
-- optionally allocate an evaluate GPU
+- maybe dynamically adjust the number of gpus used for training/collection
 
 
 ## General TODOs:

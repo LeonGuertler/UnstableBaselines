@@ -3,7 +3,7 @@ python3 unstable.py \
     --train_env_id "SimpleTak-v0,Snake-v0,ConnectFour-v0" \
     --eval_env_id "SimpleTak-v0,TicTacToe-v0,ConnectFour-v0,Snake-v0"\
     --wandb \
-    --num_actors 5 \
+    --num_actors 2 \
     --num_learners 1 \
     --lr 2e-5 \
     --batch_size 256 \
@@ -17,7 +17,8 @@ python3 unstable.py \
     --lora_alpha 32 \
     --lora_dropout 0 \
     --initial_lora_path "checkpoint-3" \
-    --self_play_opponent_lag 5 \
+    --self_play_opponent_lag_lower 7 \
+    --self_play_opponent_lag_upper 11 \
     --format_reward_think 0.5 \
     --format_reward_valid_move 0.5 \
     --format_penalty_invalid_move -0.5
