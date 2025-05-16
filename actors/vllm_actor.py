@@ -1,94 +1,56 @@
-import os, time, asyncio, threading
-import ray, vllm, torch
-import numpy as np
+import os, time
+import asyncio
 from collections import deque
+from typing import Optional
 
+import ray, torch, vllm
+from vllm import EngineArgs, LLMEngine, SamplingParams
+from vllm.lora.request import LoRARequest
 
 class VLLMActor:
     def __init__(self, args):
-        gpu_ids = ray.get_gpu_ids()
+        gpu_ids = ray.get_gpu_ids() 
         os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, gpu_ids))
         torch.cuda.set_device(0)
 
-        self.llm = vllm.LLM(model=args.model_name, trust_remote_code=True, dtype="bfloat16", task="generate", max_num_seqs=256)
-        self.sampling_params = vllm.SamplingParams(temperature=args.temperature, top_p=args.top_p, max_tokens=args.max_tokens)
+        self.args = args
+        engine_args = EngineArgs(
+            model=args.model_name, enable_lora=True, max_loras=args.vllm_max_loras, max_lora_rank=args.lora_rank, 
+            max_cpu_loras=args.vllm_max_loras, max_num_seqs=args.max_vllm_seq, task="generate"
+        )
+        self.engine = LLMEngine.from_engine_args(engine_args)
+        self.sampling_params = SamplingParams(temperature=args.temperature, top_p=args.top_p, max_tokens=args.max_tokens)
 
-        self.queue = deque()
-        self.loop = asyncio.get_event_loop()
-        self.loop.create_task(self._batch_loop())
+        self._queue = deque()
+        self._futures = {}
+        self._next_id = 0
 
-        self.lock = threading.Lock()
+        loop = asyncio.get_event_loop()
+        loop.create_task(self._batch_loop())
 
-    async def submit_prompt(self, prompt: str):
+    async def submit_prompt(self, prompt: str, lora_path: Optional[str] = None) -> str:
         fut = asyncio.Future()
-        self.queue.append((prompt, fut))
+        self._queue.append((prompt, lora_path, fut))
         return await fut
 
     async def _batch_loop(self):
         while True:
             await asyncio.sleep(0.02)
-            if not self.queue:
-                continue
-            batch = []
-            while self.queue:
-                batch.append(self.queue.popleft())
-            prompts, futures = zip(*batch)
-            try:
-                outputs = await asyncio.to_thread(self.llm.generate, prompts, self.sampling_params, use_tqdm=True)
-                for fut, out in zip(futures, outputs):
-                    fut.set_result(out.outputs[0].text)
-            except Exception as e:
-                for fut in futures:
-                    fut.set_exception(e)
+            while self._queue:
+                prompt, path, fut = self._queue.popleft()
+                req_id = str(self._next_id)
+                self._next_id += 1
+                self._futures[req_id] = fut
+                lora_req = LoRARequest(lora_name=path, lora_path=path, lora_int_id=abs(hash(path))) if path is not None else None
+                print(f"[Actor {os.getpid()}] submitting req {req_id} with {lora_req}")
+                self.engine.add_request(req_id, prompt, self.sampling_params, lora_request=lora_req)
 
-    # async def update_weights(self, weights_ref):
-    #     # This yields control while the data is transferred
-    #     weights = await weights_ref           # <- await, NOT ray.get
+            # Step the engine and only resolve once finish_reason is non-None
+            for out in self.engine.step():
+                token = out.outputs[-1] # take the last token in this partial output
+                if token.finish_reason is None: # skip interim/newline events
+                    continue
+                fut = self._futures.pop(out.request_id, None) # now it’s done—fulfil the future
+                if fut:
+                    fut.set_result(token.text)
 
-    #     print("\n\nUPDATING ACTOR WEIGHTS")
-    #     t0 = time.time()
-    #     with self.lock, torch.no_grad():
-    #         model = (self.llm.llm_engine.model_executor
-    #                                .driver_worker.worker.get_model())
-    #         device = next(model.parameters()).device
-    #         for k, w in weights.items():
-    #             if k in model.state_dict() and model.state_dict()[k].shape == w.shape:
-    #                 model.state_dict()[k].copy_(
-    #                     torch.from_numpy(w).to(device, non_blocking=True))
-    #     print(f"Finished updating weights in {time.time() - t0:.2f}s\n")
-
-
-    # def update_weights(self, weights_ref):
-    #     print("\n\nUPDATING ACTOR WEIGHTS")
-    #     t0 = time.time()
-    #     weights = ray.get(weights_ref)
-    #     with self.lock:
-    #         with torch.no_grad():
-    #             executor = self.llm.llm_engine.model_executor
-    #             model = executor.driver_worker.worker.get_model()
-    #             device = next(model.parameters()).device
-    #             state_dict = model.state_dict()
-    #             for k in weights:
-    #                 if k in state_dict and state_dict[k].shape == weights[k].shape:
-    #                     tensor = torch.from_numpy(weights[k].copy()).to(device)
-    #                     state_dict[k].copy_(tensor)
-    #     print(f"Finished updating weights in {time.time()-t0} seconds.\n\n")
-
-
-    def update_weights(self, weights):          # <-- rename, it's a dict now
-        print("\nUPDATING ACTOR WEIGHTS")
-        t0 = time.time()
-
-        with self.lock, torch.no_grad():
-            model = (self.llm.llm_engine
-                        .model_executor
-                        .driver_worker.worker.get_model())
-            device = next(model.parameters()).device
-            state_dict = model.state_dict()
-
-            for k, w in weights.items():
-                if k in state_dict and state_dict[k].shape == w.shape:
-                    tensor = torch.from_numpy(w).to(device, non_blocking=True)
-                    state_dict[k].copy_(tensor)
-
-        print(f"Finished updating weights in {time.time() - t0:.2f}s\n")

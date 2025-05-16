@@ -177,3 +177,7 @@ cython_debug/
 # custom
 wandb/*
 *.csv
+TorchTrainer*
+checkpoint*
+data*
+checkpoint*
