@@ -179,5 +179,5 @@ wandb/*
 *.csv
 TorchTrainer*
 checkpoint*
-data*
+# data*
 checkpoint*
