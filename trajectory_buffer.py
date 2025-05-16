@@ -133,8 +133,9 @@ class WandBTracker:
         n_turns = len(trajectory.pid)
         self.update_metric("Game Length", n_turns, "collection", env_id)
         for i in range(n_turns):
-            self.update_metric("Format Success Rate", int(trajectory.format_feedbacks[i]["has_think"]), "collection", env_id)
-            self.update_metric("Format Invalid Move Rate", int(trajectory.format_feedbacks[i]["invalid_move"]), "collection", env_id)
-            self.update_metric("Response Length (avg char)", len(trajectory.actions[i]), "collection", env_id)
+            if current_checkpoint_pid==trajectory.pid[i] or self.args.use_all_data:
+                self.update_metric("Format Success Rate", int(trajectory.format_feedbacks[i]["has_think"]), "collection", env_id)
+                self.update_metric("Format Invalid Move Rate", int(trajectory.format_feedbacks[i]["invalid_move"]), "collection", env_id)
+                self.update_metric("Response Length (avg char)", len(trajectory.actions[i]), "collection", env_id)
         self.num_trajectories[env_id] += 1
         self.log_metrics("collection")

@@ -46,17 +46,10 @@ class Collector:
         return self.lora_paths[-1]
     
     def get_previous_lora(self):
-        if len(self.lora_paths) > self.args.self_play_opponent_lag:
-            return self.lora_paths[-self.args.self_play_opponent_lag]
-        else:
-            return self.lora_paths[0]
+        return self.lora_paths[-self.args.self_play_opponent_lag] if len(self.lora_paths) > self.args.self_play_opponent_lag else self.lora_paths[0]
 
-    def get_random_lora(self):
-        # get random lora weights from within the opponent delay window
-        if len(self.lora_paths) > self.args.self_play_opponent_lag:
-            return random.choice(self.lora_paths[:-self.args.self_play_opponent_lag])
-        else:
-            return self.lora_paths[0]
+    def get_random_lora(self): # get random lora weights from within the opponent delay window
+        return random.choice(self.lora_paths[:-self.args.self_play_opponent_lag]) if len(self.lora_paths) > self.args.self_play_opponent_lag else self.lora_paths[0]
 
     def add_new_lora_paths(self, new_path: str):
         self.lora_paths.append(new_path)
@@ -82,10 +75,9 @@ def collect_episode_once(args, player_id: int, buffer, tracker, actor, collector
         action = truncate_after_boxed(action) # extract trunc act
         extracted_action, format_feedback = ACTION_EXTRACTION[args.action_extraction_template](raw_action=action) # extract environment action
         done, _ = env.step(action=extracted_action)
-        traj.pid.append(pid)
-        traj.obs.append(formatted_prompt)
-        traj.actions.append(action)
-        traj.format_feedbacks.append(format_feedback)
+        
+        traj.pid.append(pid); traj.obs.append(formatted_prompt)
+        traj.actions.append(action); traj.format_feedbacks.append(format_feedback)
         steps += 1
 
     traj.final_rewards = env.close() if done else {0: 0, 1: 0}
@@ -297,16 +289,9 @@ if __name__ == "__main__":
 
 
 # TODO add a single gpu debugging mode frfr
-# TODO assert as much as possible before running ray (i.e. OPENROUTER_API_KEY etc. etc. etc.)
-# TODO move the folder initialization into utils
-
-
-
-
-# TODO assert batch-size vs gradient_accumulation_steps vs world-size
+# TODO asserts
 
 
 # TODO optimize by grouping same lora paths to same gpus
-
-
-# TODO add better reward stats
+# TODO add better reward stats (optimally somehow log the transformed rewards to wandb as well)
+# TODO seperate the logs for everything (and actually log to files) for easier debuggin
