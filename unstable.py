@@ -21,6 +21,7 @@ from utils.templates import OBSERVATION_FORMATTING, ACTION_EXTRACTION
 from utils.local_files import initialize_local_folder_structure
 from utils.local_textarena_modules import FirstLastObservationWrapper
 from utils.misc import truncate_after_boxed
+# from utils.logging_utils import setup_logger, hijack_print
 
 
 
@@ -46,10 +47,11 @@ class Collector:
         return self.lora_paths[-1]
     
     def get_previous_lora(self):
-        return self.lora_paths[-self.args.self_play_opponent_lag] if len(self.lora_paths) > self.args.self_play_opponent_lag else self.lora_paths[0]
+        return self.lora_paths[-self.args.self_play_opponent_lag_lower] if len(self.lora_paths) > self.args.self_play_opponent_lag_lower else self.lora_paths[0]
 
     def get_random_lora(self): # get random lora weights from within the opponent delay window
-        return random.choice(self.lora_paths[:-self.args.self_play_opponent_lag]) if len(self.lora_paths) > self.args.self_play_opponent_lag else self.lora_paths[0]
+        lower=self.args.self_play_opponent_lag_lower; upper=self.args.self_play_opponent_lag_upper
+        return random.choice(self.lora_paths[-min(upper, len(self.lora_paths)):-lower]) if len(self.lora_paths) > lower else self.lora_paths[0] 
 
     def add_new_lora_paths(self, new_path: str):
         self.lora_paths.append(new_path)
@@ -91,7 +93,7 @@ def collect_episode_once(args, player_id: int, buffer, tracker, actor, collector
 
     traj.num_turns = steps
     print(f"GAME FINISHED< ADDING TO BUFFER. num steps: {steps}")
-    ray.get(buffer.add_trajectory.remote(traj, current_checkpoint_pid=player_id))
+    ray.get(buffer.add_trajectory.remote(traj, current_checkpoint_pid=player_id, env_id=env_id))
     ray.get(tracker.add_trajectory.remote(traj, current_checkpoint_pid=player_id, env_id=env_id))
 
 
@@ -163,9 +165,7 @@ def start_actor_loop(args, collector, buffer, tracker):
 
 
 def parse_eval_env_id(arg): # If passed as a comma-separated string, split it
-    if ',' in arg:
-        return arg.split(',')
-    return arg
+    return arg.split(',') if ',' in arg else arg 
 
 def main():
     # base args
@@ -194,8 +194,6 @@ def main():
     ap.add_argument("--max_vllm_seq", type=int, default=384)
 
     # collection params
-    # ap.add_argument("--train_env_id", default="TicTacToe-v0")
-    # ap.add_argument("--train_env_id", default="TicTacToe-v0")
     ap.add_argument("--train_env_id", type=parse_eval_env_id, default="TicTacToe-v0", help="Single env as string or multiple envs as comma-separated string")
     ap.add_argument("--max_env_steps", type=int, default=32)
     ap.add_argument("--temperature", type=float, default=0.7)
@@ -203,7 +201,8 @@ def main():
     ap.add_argument("--max_tokens", type=int, default=2048)
     ap.add_argument("--observation_format_template", type=str, default="default")
     ap.add_argument("--action_extraction_template", type=str, default="default")
-    ap.add_argument("--self_play_opponent_lag", type=int, default=7)
+    ap.add_argument("--self_play_opponent_lag_lower", type=int, default=7)
+    ap.add_argument("--self_play_opponent_lag_upper", type=int, default=11)
     ap.add_argument("--use_all_data", type=bool, default=False, help="Whether to use traces from both players or only the current player")
 
     # eval params
@@ -215,7 +214,7 @@ def main():
     # directory and local logging args 
     ap.add_argument("--output_dir", type=str, default="outputs/")
     ap.add_argument("--save_strategy", type=str, default="best", choices=["steps"])
-    ap.add_argument("--save_every_n_update_steps", type=int, default=50)
+    ap.add_argument("--save_every_n_update_steps", type=int, default=25)
     ap.add_argument("--log_training_data", type=bool, default=True)
 
     # wandb & tracking params
@@ -237,6 +236,13 @@ def main():
     args.max_buffer_size = args.batch_size*3 # default TODO maybe move at some point
     args = initialize_local_folder_structure(args=args)
 
+#     ###
+#     log_dir = os.path.join(args.run_folder, "logs")
+#     driver_log = setup_logger("driver", log_dir)
+#     hijack_print(driver_log)            # optional – keeps existing print() calls
+#     driver_log.info(f"Run folder: {args.run_folder}")
+# ###
+
 
     # build the reward transformations to be used
     final_reward_transformation = retra.ComposeFinalRewardTransforms([
@@ -253,7 +259,7 @@ def main():
 
     # check whether the gpu counts are correct
     total_gpus, _ = validate_requested_gpus(args=args)
-    ray.init(num_gpus=total_gpus)
+    ray.init(num_gpus=total_gpus, log_to_driver=False, logging_level="ERROR", _temp_dir=os.path.abspath(os.path.join(args.run_folder, "ray_session")))
 
     buffer = StepBuffer.remote(
         args=args,
@@ -293,5 +299,18 @@ if __name__ == "__main__":
 
 
 # TODO optimize by grouping same lora paths to same gpus
-# TODO add better reward stats (optimally somehow log the transformed rewards to wandb as well)
 # TODO seperate the logs for everything (and actually log to files) for easier debuggin
+
+
+"""
+TODO:
+    1. proper checkpointing (with strategy)
+    2. average results for collection and eval
+    3. role advantage estimation by environment
+    4. multi-gpu TorchTrainer
+    5. seperate the logs for everything (and actually log to files) for easier debuggin
+    6. all the necessary asserts
+    7. Play against n-a; n-b checkpoints (randomly selected)
+    8. Organize .sh scripts
+
+"""

@@ -8,8 +8,12 @@ from peft import get_peft_model_state_dict, set_peft_model_state_dict
 
 # local imports
 from algorithms import Reinforce, PPO
+# from utils.logging_utils import setup_logger, hijack_print
 
-
+import logging
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO)        # or DEBUG
+logger.info("Learner %s started", os.getpid())
 
 def train_loop_per_worker(cfg):
     args = cfg["args"]; buffer = cfg["buffer"]; collector = cfg["collector"]
@@ -18,6 +22,7 @@ def train_loop_per_worker(cfg):
     root_dir = os.getcwd()
     root_checkpoint_dir = os.path.join(root_dir, args.output_dir_checkpoints)
     print(f'WILL STORE TO: {root_checkpoint_dir}')
+
 
     # Ray Train context & DDP ranks
     ctx = get_context()
@@ -29,6 +34,10 @@ def train_loop_per_worker(cfg):
 
     import torch.distributed as dist
     assert dist.is_initialized() # sanity-check
+
+
+    # log = setup_logger("learner", os.path.join(args.run_folder, "logs"), rank=rank); hijack_print(log) # logging
+    # log.info(f"Initialising learner-rank {rank}") # log it
 
     # load base + LoRA
     base = AutoModelForCausalLM.from_pretrained(args.model_name, trust_remote_code=True, torch_dtype=torch.bfloat16)
@@ -75,12 +84,28 @@ def train_loop_per_worker(cfg):
             wandb.log(avg_metrics)
 
         if rank == 0:
+            # Always save to temporary (run-specific) path
             checkpoint_folder_path = os.path.join(root_checkpoint_dir, f"iteration-{iteration}")
             os.makedirs(checkpoint_folder_path, exist_ok=True)
             peft_model = model.module if isinstance(model, torch.nn.parallel.DistributedDataParallel) else model
             peft_model.save_pretrained(checkpoint_folder_path)
             ray.get(collector.add_new_lora_paths.remote(checkpoint_folder_path))
-            session.report({"iteration": iteration})
+
+            # Save to permanent dir occasionally (e.g. every n iterations)
+            if iteration % args.save_every_n_update_steps == 0:
+                permanent_root = os.path.join(os.getcwd(), "permanent_checkpoints", args.wandb_name)
+                permanent_ckpt_path = os.path.join(permanent_root, f"iteration-{iteration}")
+                os.makedirs(permanent_ckpt_path, exist_ok=True)
+                peft_model.save_pretrained(permanent_ckpt_path)
+                print(f"Saved permanent checkpoint at {permanent_ckpt_path}")
+
+
+            # checkpoint_folder_path = os.path.join(root_checkpoint_dir, f"iteration-{iteration}")
+            # os.makedirs(checkpoint_folder_path, exist_ok=True)
+            # peft_model = model.module if isinstance(model, torch.nn.parallel.DistributedDataParallel) else model
+            # peft_model.save_pretrained(checkpoint_folder_path)
+            # ray.get(collector.add_new_lora_paths.remote(checkpoint_folder_path))
+            # session.report({"iteration": iteration})
         iteration += 1
 
 
