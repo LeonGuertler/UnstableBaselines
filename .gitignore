@@ -181,3 +181,4 @@ TorchTrainer*
 checkpoint*
 # data*
 checkpoint*
+outputs*
