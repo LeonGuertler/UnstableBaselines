@@ -32,7 +32,7 @@ class LLMObservationWrapper(ta.ObservationWrapper):
         super().__init__(env)
         self.full_observations: Dict[int, List[Tuple[int, str]]] = {}
 
-    def _convert_obs_to_str(self, player_id: int) -> Observations:
+    def _convert_obs_to_str(self, player_id: int) -> ta.Observations:
         str_observation = ""
         if player_id in self.full_observations:
             for sender_id, message in self.full_observations[player_id]:
