@@ -22,6 +22,7 @@ Afterward you can just run `bash run.sh`. Depending on how many GPUs you have, y
 - seperate the logs for everything (and actually log to files) for easier debugging
 - all the necessary asserts 
 - Organize .sh scripts
+- add default Identity reward transformations
 
 
 - store specific checkpoints
