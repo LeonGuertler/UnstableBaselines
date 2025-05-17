@@ -62,6 +62,7 @@ def get_args():
     ap.add_argument("--lora_rank", type=int, default=32)
     ap.add_argument("--lora_alpha", type=int, default=32)
     ap.add_argument("--lora_dropout", type=int, default=0.0)
+    ap.add_argument("--use_rslora", type=bool, default=True)
     ap.add_argument("--initial_lora_path", type=str, default=None)
     ap.add_argument("--vllm_max_loras", type=int, default=4)
 

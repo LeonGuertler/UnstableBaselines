@@ -33,7 +33,7 @@ class Collector:
     def __init__(self, args): 
         self.args = args
         self.actor_group: List[ray.actor.ActorHandle] = []
-        self.lora_paths: List[Optional[str]] = [args.initial_lora_path]
+        self.lora_paths: List[Optional[str]] = [None if (args.initial_lora_path is None or args.initial_lora_path.lower()=="none") else args.initial_lora_path]
 
     def initialize(self, num_actors: int):
         self.actor_group = [RayActor.remote(self.args) for _ in range(num_actors)]
