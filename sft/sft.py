@@ -72,7 +72,7 @@ def format_trace(observation, reasoning, action):
 #         return dict(input_ids=torch.tensor(ids), labels=torch.tensor(labels))
 
 class ObservationActionDataset(Dataset):
-    def __init__(self, paths, tokenizer, max_len=8192):
+    def __init__(self, paths, tokenizer, max_len=4096):
         raw_samples = []
         for path in paths:
             raw_samples.extend(json.loads(l) for l in open(path, "r", encoding="utf-8"))
@@ -173,6 +173,7 @@ if args.wandb_project:
     wandb.init(project=args.wandb_project, name=args.wandb_name, config=vars(args))
 
 for epoch in range(1, args.epochs + 1):
+    print(f"starting epoch {epoch} out of {args.epochs}")
     t0 = time.time()
     train_loss = run_epoch(model, train_loader, scheduler.optimizer, scheduler, device, True)
     val_loss = run_epoch(model, val_loader, scheduler.optimizer, scheduler, device, False) if val_ds else None
@@ -181,4 +182,5 @@ for epoch in range(1, args.epochs + 1):
         wandb.log({"epoch": epoch, "train_loss": train_loss, "val_loss": val_loss})
     ckpt = os.path.join(args.output_dir, f"checkpoint-{epoch}"); os.makedirs(ckpt, exist_ok=True)
     model.save_pretrained(ckpt); tokenizer.save_pretrained(ckpt)
+
 print("✓ LoRA checkpoints at", args.output_dir)

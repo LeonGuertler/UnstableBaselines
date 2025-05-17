@@ -15,7 +15,7 @@ python3 sft.py \
     --train_files data/Snake.jsonl data/SimpleTak.jsonl data/SimpleNegotiation.jsonl \
     --output_dir "sft_lora_4b" \
     --batch_size 32 \
-    --epochs 1 \
+    --epochs 3 \
     --lora_rank 128 \
     --lora_alpha 256 \
     --lora_dropout 0.03 \

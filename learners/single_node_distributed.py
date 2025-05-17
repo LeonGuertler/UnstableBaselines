@@ -49,6 +49,8 @@ def train_loop_per_worker(cfg):
         torch.cuda.empty_cache()
 
     model = torch.nn.parallel.DistributedDataParallel(peft_model, device_ids=[local_gpu], output_device=local_gpu, find_unused_parameters=False)
+    # model.gradient_checkpointing_enable()
+
     tokenizer = AutoTokenizer.from_pretrained(args.model_name, trust_remote_code=True)
     optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=args.lr) # optimizer over only the adapters
     algo = Reinforce(args, model, tokenizer, device)

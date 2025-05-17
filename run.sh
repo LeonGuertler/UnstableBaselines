@@ -4,7 +4,7 @@ python3 unstable.py \
     --eval_env_id "SimpleTak-v0,TicTacToe-v0,ConnectFour-v0,Snake-v0"\
     --wandb \
     --debugging True \
-    --num_actors 2 \
+    --num_actors 7 \
     --num_learners 1 \
     --lr 5e-5 \
     --batch_size 384 \
