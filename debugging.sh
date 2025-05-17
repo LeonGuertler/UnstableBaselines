@@ -12,8 +12,8 @@ python3 unstable.py \
     --max_tokens 4096 \
     --gradient_checkpointing \
     --bf16_training \
-    --num_collection_workers 384 \
-    --num_evaluation_workers 32 \
+    --num_collection_workers 1 \
+    --num_evaluation_workers 1 \
     --lora_rank 128 \
     --lora_alpha 256 \
     --lora_dropout 0 \

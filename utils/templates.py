@@ -17,17 +17,31 @@ def apply_qwen3_template(observation: str) -> str:
         "<|im_start|>assistant\n"
     )
 
+# def extract_action_and_format_feedback(raw_action: str) -> Tuple[str, Dict[str, bool]]:
+#     # Find the first instance of \boxed{...} and extract its contents
+#     match = re.search(r"\\boxed\{(.*?)\}", raw_action)
+#     if match:
+#         action = match.group(1)
+#         if "[" not in action:
+#             action = f"[{action.strip()}]"
+#     else:
+#         action = "No action was found."
+#     format_feedback = {"has_think": False, "has_answer": False, "order_correct": False}
+#     return action, format_feedback
+
 def extract_action_and_format_feedback(raw_action: str) -> Tuple[str, Dict[str, bool]]:
-    # Find the first instance of \boxed{...} and extract its contents
-    match = re.search(r"\\boxed\{(.*?)\}", raw_action)
-    if match:
-        action = match.group(1)
+    # Find all instances of \boxed{...}
+    matches = re.findall(r"\\boxed\{(.*?)\}", raw_action)
+    if matches:
+        action = matches[-1]  # Use the last match
+        if "[" not in action:
+            action = f"[{action.strip()}]"
     else:
-        action = ""
+        action = "No action was found."
     format_feedback = {"has_think": False, "has_answer": False, "order_correct": False}
     return action, format_feedback
 
-
+    
 
 OBSERVATION_FORMATTING = {
     "default": apply_default_template,

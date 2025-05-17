@@ -79,10 +79,13 @@ def collect_episode_once(args, player_id: int, buffer, tracker, actor, collector
     while not done and steps < args.max_env_steps:
         pid, obs = env.get_observation()
         formatted_prompt = OBSERVATION_FORMATTING[args.observation_format_template](observation=obs)
+        # print("formatted_prompt", formatted_prompt)
         lora_path = ray.get(lora_paths[pid].remote())
         action = ray.get(actor.submit_prompt.remote(prompt=formatted_prompt, lora_path=lora_path))
-        action = truncate_after_boxed(action) # extract trunc act
+        # print("raw_action", action)
+        # action = truncate_after_boxed(action) # extract trunc act
         extracted_action, format_feedback = ACTION_EXTRACTION[args.action_extraction_template](raw_action=action) # extract environment action
+        # print('submitted action: ', extracted_action)
         done, _ = env.step(action=extracted_action)
         
         traj.pid.append(pid); traj.obs.append(formatted_prompt)
