@@ -1,0 +1,80 @@
+{
+  "os": "Linux-6.8.0-58-generic-x86_64-with-glibc2.35",
+  "python": "CPython 3.12.5",
+  "startedAt": "2025-05-17T09:47:49.481533Z",
+  "args": [
+    "--model_name",
+    "Qwen/Qwen3-4B-base",
+    "--train_files",
+    "data/Snake.jsonl",
+    "data/SimpleTak.jsonl",
+    "data/SimpleNegotiation.jsonl",
+    "--output_dir",
+    "sft_lora_4b",
+    "--batch_size",
+    "32",
+    "--epochs",
+    "1",
+    "--lora_rank",
+    "128",
+    "--lora_alpha",
+    "256",
+    "--lora_dropout",
+    "0.03",
+    "--use_rslora",
+    "True",
+    "--wandb_project",
+    "UnstableBaselines",
+    "--wandb_name",
+    "combined-sft"
+  ],
+  "program": "/home/guertlerlo/Desktop/UnstableBaselines/sft/sft.py",
+  "codePath": "sft/sft.py",
+  "git": {
+    "remote": "https://github.com/LeonGuertler/UnstableBaselines.git",
+    "commit": "7cc1372c7280632551e06c7c3046533b11659583"
+  },
+  "email": "leon002@e.ntu.edu.sg",
+  "root": "/home/guertlerlo/Desktop/UnstableBaselines/sft",
+  "host": "IHP-SPD-5032501",
+  "executable": "/home/guertlerlo/miniforge3/envs/torch/bin/python3",
+  "codePathLocal": "sft.py",
+  "cpu_count": 32,
+  "cpu_count_logical": 64,
+  "gpu": "NVIDIA RTX 6000 Ada Generation",
+  "gpu_count": 3,
+  "disk": {
+    "/": {
+      "total": "3936290357248",
+      "used": "1187750834176"
+    }
+  },
+  "memory": {
+    "total": "540292894720"
+  },
+  "cpu": {
+    "count": 32,
+    "countLogical": 64
+  },
+  "gpu_nvidia": [
+    {
+      "name": "NVIDIA RTX 6000 Ada Generation",
+      "memoryTotal": "51527024640",
+      "cudaCores": 18176,
+      "architecture": "Ada"
+    },
+    {
+      "name": "NVIDIA RTX 6000 Ada Generation",
+      "memoryTotal": "51527024640",
+      "cudaCores": 18176,
+      "architecture": "Ada"
+    },
+    {
+      "name": "NVIDIA RTX 6000 Ada Generation",
+      "memoryTotal": "51527024640",
+      "cudaCores": 18176,
+      "architecture": "Ada"
+    }
+  ],
+  "cudaVersion": "12.8"
+}

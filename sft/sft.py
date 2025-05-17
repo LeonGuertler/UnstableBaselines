@@ -1,44 +1,110 @@
-import os, json, math, argparse, time
+import os, json, math, argparse, time, random
 import torch
 from torch.utils.data import DataLoader, Dataset
 from transformers import AutoModelForCausalLM, AutoTokenizer, get_linear_schedule_with_warmup
 import wandb
-from learners.lora_utils import build_lora_model
+# from .learners.lora_utils import build_lora_model
 from peft.tuners.lora import LoraModel
+import torch, pathlib
+from safetensors.torch import load_file as safe_load
+from peft import LoraConfig, get_peft_model, get_peft_model_state_dict, set_peft_model_state_dict
 
+
+def build_lora_model(model, args): 
+    cfg = LoraConfig(
+        r=args.lora_rank,
+        lora_alpha=args.lora_alpha,
+        lora_dropout=args.lora_dropout,
+        bias="none",
+        target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
+        task_type="CAUSAL_LM",
+        use_rslora=args.use_rslora,
+    )
+    return get_peft_model(model, cfg)
+
+
+# def format_trace(observation, reasoning, action):
+#     instruction = "You are playing a two-player zero-sum game. Make valid moves to win. You should first reason about your next move, and then submit the move enclosed by \\boxed{}."
+#     full_observation = instruction + f"\nObservation: {observation}\n"
+#     full_trace = f"{reasoning}\n\\boxed{{{action}}}"
+#     return full_observation, full_trace
+
+def apply_qwen3_template(observation: str) -> str:
+    return (
+        f"<|im_start|>user\nYou are playing a two-player zero-sum game. Make valid actions to win.\nObservation: {observation}"
+        "\nPlease reason step by step, and put your final answer within \\boxed{}.<|im_end|>\n"
+        "<|im_start|>assistant\n"
+    )
 
 def format_trace(observation, reasoning, action):
-    instruction = "You are playing a two-player zero-sum game. Make valid moves to win. You should first reason about your next move, and then submit the move enclosed by \\boxed{}."
-    full_observation = instruction + f"\nObservation: {observation}\n"
+    # instruction = "You are playing a two-player zero-sum game. Make valid moves to win. You should first reason about your next move, and then submit the move enclosed by \\boxed{}."
+    # full_observation = instruction + f"\nObservation: {observation}\n"
+    full_observation = apply_qwen3_template(observation=observation)
     full_trace = f"{reasoning}\n\\boxed{{{action}}}"
     return full_observation, full_trace
 
-class ObservationActionDataset(Dataset):
-    def __init__(self, path, tokenizer, max_len=4096):
-        raw_samples = [json.loads(l) for l in open(path, "r", encoding="utf-8")]
 
-        print(f"Len raw data{len(raw_samples)}")
+# class ObservationActionDataset(Dataset):
+#     def __init__(self, path, tokenizer, max_len=4096):
+#         raw_samples = [json.loads(l) for l in open(path, "r", encoding="utf-8")]
+
+#         print(f"Len raw data{len(raw_samples)}")
+#         self.samples = []
+#         for ex in raw_samples:
+#             prompt, target = format_trace(observation=ex["observation"], reasoning=ex["reasoning"], action=ex["answer"])
+#             prompt_ids = tokenizer(prompt, add_special_tokens=False).input_ids
+#             target_ids = tokenizer(target, add_special_tokens=False).input_ids + [tokenizer.eos_token_id]
+#             if len(prompt_ids) + len(target_ids) <= max_len and ex["answer"]!="":
+#                 self.samples.append(ex)
+
+#         print(f"Len data{len(self.samples)}")
+
+#         self.tok = tokenizer; self.max_len = max_len
+
+#     def __len__(self): return len(self.samples)
+#     def __getitem__(self, idx):
+#         ex = self.samples[idx]
+#         prompt, target = format_trace(observation=ex["observation"], reasoning=ex["reasoning"], action=ex["answer"])
+#         prompt_ids = self.tok(prompt, add_special_tokens=False).input_ids
+#         target_ids = self.tok(target, add_special_tokens=False, max_length=self.max_len).input_ids + [self.tok.eos_token_id]
+#         ids = prompt_ids + target_ids
+#         labels = [-100] * len(prompt_ids) + target_ids
+#         return dict(input_ids=torch.tensor(ids), labels=torch.tensor(labels))
+
+class ObservationActionDataset(Dataset):
+    def __init__(self, paths, tokenizer, max_len=8192):
+        raw_samples = []
+        for path in paths:
+            raw_samples.extend(json.loads(l) for l in open(path, "r", encoding="utf-8"))
+        print(f"Total raw samples: {len(raw_samples)}")
+
         self.samples = []
         for ex in raw_samples:
             prompt, target = format_trace(observation=ex["observation"], reasoning=ex["reasoning"], action=ex["answer"])
             prompt_ids = tokenizer(prompt, add_special_tokens=False).input_ids
             target_ids = tokenizer(target, add_special_tokens=False).input_ids + [tokenizer.eos_token_id]
-            if len(prompt_ids) + len(target_ids) <= max_len and ex["answer"]!="":
+            if len(prompt_ids) + len(target_ids) <= max_len and ex["answer"] != "":
                 self.samples.append(ex)
 
-        print(f"Len data{len(self.samples)}")
+        print(f"Filtered samples: {len(self.samples)}")
+        # Shuffle samples
+        random.shuffle(self.samples)
 
-        self.tok = tokenizer; self.max_len = max_len
+        self.tok = tokenizer
+        self.max_len = max_len
 
     def __len__(self): return len(self.samples)
+
     def __getitem__(self, idx):
         ex = self.samples[idx]
         prompt, target = format_trace(observation=ex["observation"], reasoning=ex["reasoning"], action=ex["answer"])
         prompt_ids = self.tok(prompt, add_special_tokens=False).input_ids
-        target_ids = self.tok(target, add_special_tokens=False, max_length=self.max_len).input_ids + [self.tok.eos_token_id]
+        target_ids = self.tok(target, add_special_tokens=False).input_ids + [self.tok.eos_token_id]
         ids = prompt_ids + target_ids
         labels = [-100] * len(prompt_ids) + target_ids
         return dict(input_ids=torch.tensor(ids), labels=torch.tensor(labels))
+
+
 
 def collate(batch):
     max_len = max(len(x["input_ids"]) for x in batch)
@@ -66,7 +132,8 @@ def run_epoch(model, loader, optimizer, scheduler, device, train=True):
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--model_name", default="Qwen/Qwen3-0.6B")
-parser.add_argument("--train_file", required=True)
+# parser.add_argument("--train_file", required=True)
+parser.add_argument("--train_files", nargs="+", required=True)
 parser.add_argument("--val_file")
 parser.add_argument("--output_dir", default="outputs/sft_lora")
 parser.add_argument("--batch_size", type=int, default=32)
@@ -78,16 +145,19 @@ parser.add_argument("--gradient_accumulation_steps", type=int, default=32)
 parser.add_argument("--lora_rank", type=int, default=32)
 parser.add_argument("--lora_alpha", type=int, default=32)
 parser.add_argument("--lora_dropout", type=float, default=0.0)
+parser.add_argument("--use_rslora", type=bool, default=True)
 parser.add_argument("--wandb_project"); parser.add_argument("--wandb_name")
 args = parser.parse_args(); os.makedirs(args.output_dir, exist_ok=True)
 
 tokenizer = AutoTokenizer.from_pretrained(args.model_name, trust_remote_code=True)
 if tokenizer.pad_token_id is None: tokenizer.pad_token_id = tokenizer.eos_token_id
 base = AutoModelForCausalLM.from_pretrained(args.model_name, trust_remote_code=True, torch_dtype=torch.bfloat16)
-model = build_lora_model(base, r=args.lora_rank, alpha=args.lora_alpha, dropout=args.lora_dropout)
+model = build_lora_model(base, args=args)# r=args.lora_rank, alpha=args.lora_alpha, dropout=args.lora_dropout)
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu"); model.to(device)
 
-train_ds = ObservationActionDataset(args.train_file, tokenizer)
+# train_ds = ObservationActionDataset(args.train_file, tokenizer)
+train_ds = ObservationActionDataset(args.train_files, tokenizer)
+
 val_ds = ObservationActionDataset(args.val_file, tokenizer) if args.val_file else None
 micro_batch_size = args.batch_size // args.gradient_accumulation_steps
 if micro_batch_size == 0:

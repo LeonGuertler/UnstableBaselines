@@ -39,9 +39,10 @@ class OpenRouterAgent:
 
 def make_env(env_id: str):
     env = ta.make(env_id)
-    env = ta.wrappers.FirstLastObservationWrapper(env)
+    # env = ta.wrappers.FirstLastObservationWrapper(env)
+    env = ta.wrappers.LLMObservationWrapper(env)
     env.reset(num_players=2)
-    env.state.error_allowance = 0
+    # env.state.error_allowance = 0
     return env
 
 def play_episode(args, agent: OpenRouterAgent) -> List[Dict]:
