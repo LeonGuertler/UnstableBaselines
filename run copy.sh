@@ -3,13 +3,12 @@ python3 unstable.py \
     --train_env_id "SimpleTak-v0,Snake-v0,ConnectFour-v0" \
     --eval_env_id "SimpleTak-v0,TicTacToe-v0,ConnectFour-v0,Snake-v0"\
     --wandb \
-    --debugging True \
     --num_actors 2 \
     --num_learners 1 \
     --lr 2e-5 \
     --batch_size 256 \
     --gradient_accumulation_steps 256 \
-    --max_tokens 3000 \
+    --max_tokens 5000 \
     --gradient_checkpointing \
     --bf16_training \
     --num_collection_workers 384 \

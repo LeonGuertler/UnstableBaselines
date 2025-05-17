@@ -32,7 +32,7 @@ def initialize_local_folder_structure(args):
 
     # set absolute paths where necessary
     args.initial_lora_path = os.path.abspath(args.initial_lora_path)
-
+    print(f"Logs are located at: {args.output_dir_logs}")
     return args
 
 def write_eval_data_to_file(episode_info, filename):

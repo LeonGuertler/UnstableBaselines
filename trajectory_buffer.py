@@ -8,6 +8,7 @@ from typing import List, Dict, Optional, Tuple, Callable
 from utils.local_files import write_eval_data_to_file, write_training_data_to_file
 
 
+
 @dataclass
 class Trajectory:
     pid: List[int] = field(default_factory=list); obs: List[str] = field(default_factory=list)

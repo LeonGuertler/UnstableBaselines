@@ -2,42 +2,26 @@
 (it's calles `unstable-baselines` becuase the maintained OpenAI baselines package is called `stable-baselines`)
 
 
+# Getting Started
+It makes sense to start from the game-tuned checkpoint (three epochs of sft on 750 observation-actions pairs generated via R1 self-play on TicTacToe-v0). 
+The checkpoint is zipped `lora_ckpt.zip`. You have to unzip it. The `run.sh` script will use this as the initial set of lora weights by default. 
+Afterward you can just run `bash run.sh`. Depending on how many GPUs you have, you can set the `--num_actors` and `--num_learners`. Keep in mind that collection is much much much more expensive than lora-training (so 5-1 is prob a good ratio).
+
+
+# For checking:
+- proper checkpointing (with strategy) [done; requires testing]
+- average results for collection and eval  [done; requires testing]
+- role advantage estimation by environment  [done; requires testing]
+- Play against n-a; n-b checkpoints (randomly selected)   [done; requires testing]
+- split output folders (esp eval) [done; requires testing]
+
+
 
 # TODOs
-
-<!-- - make num train gpus more flexible (i.e. 1-n) -->
-<!-- - create warning if not all gpus are used -->
-<!-- - track invalid move rate -->
-<!-- - better default name for wandb run -->
-<!-- - keep track of win-rate by pid -->
-<!-- - make sure to only submit the final action (i.e. add action extraction logic) -->
-<!-- - add format reward -->
-<!-- - add standard formatting options -->
-<!-- - add eval metrics to wandb -->
-<!-- - store sample CoTs -->
-<!-- - add a moving-average tracker and add tau/ma for both the wandb tracking -->
-<!-- - dynamically collect eval episodes in parallel -->
-<!-- - randomly subsample when  hitting max buffer size -->
-<!-- - add training metrics to wandb (the actual training metrics) 
-        -> pass the tracker into the training loop?
-        -> maybe get the algo to return a dict of stuff worth tracking -->
-<!-- - maybe allow for uneven number of actor gpus -->
-<!-- - training and vllm inf with hot-swapped LoRA weights (https://docs.vllm.ai/en/stable/features/lora.html -> doesn't seem hard and given the recent papers on this super worth doing) -->
-<!-- - split output dir by date, then time -->
-<!-- - track reward sd (echo trap) -->
-<!-- - fix where the lora weights end up -->
-
-
-### TODO:
-1. proper checkpointing (with strategy) [done; requires testing]
-2. average results for collection and eval  [done; requires testing]
-3. role advantage estimation by environment  [done; requires testing]
-4. multi-gpu TorchTrainer
-5. seperate the logs for everything (and actually log to files) for easier debuggin
-6. all the necessary asserts 
-7. Play against n-a; n-b checkpoints (randomly selected)   [done; requires testing]
-8. Organize .sh scripts
-9. split output folders (esp eval) [done; requires testing]
+- multi-gpu TorchTrainer
+- seperate the logs for everything (and actually log to files) for easier debugging
+- all the necessary asserts 
+- Organize .sh scripts
 
 
 - store specific checkpoints
