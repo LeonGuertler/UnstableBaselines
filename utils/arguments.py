@@ -43,7 +43,6 @@ def get_args():
 
     # eval params
     ap.add_argument("--eval_env_id", type=lambda arg: arg.split(',') if ',' in arg else arg, default="TicTacToe-v0", help="Single env as string or multiple envs as comma-separated string")
-    # ap.add_argument("--eval_env_id", default="TicTacToe-v0")
     ap.add_argument("--max_env_steps_eval", type=int, default=64)
     ap.add_argument("--eval_model_name", type=str, default="google/gemini-2.0-flash-lite-001")
 

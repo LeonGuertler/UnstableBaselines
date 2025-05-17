@@ -154,12 +154,14 @@ def start_actor_loop(args, collector, buffer, tracker):
 
             # Replenish collection
             if len(collection_outstanding) < args.num_collection_workers:
-                future = collect_episode_once.remote(args=args, player_id=int(np.random.uniform()<0.5), buffer=buffer, tracker=tracker, actor=ray.get(collector.get_actor.remote()), collector=collector)
+                actor = ray.get(collector.get_actor.remote())
+                future = collect_episode_once.remote(args=args, player_id=int(np.random.uniform()<0.5), buffer=buffer, tracker=tracker, actor=actor, collector=collector)
                 collection_outstanding.append(future)
 
             # Replenish evaluation
             if len(evaluation_outstanding) < args.num_evaluation_workers:
-                future = run_eval_episode.remote(args=args, player_id=int(np.random.uniform()<0.5), tracker=tracker, actor=ray.get(collector.get_actor.remote()), collector=collector)
+                actor = ray.get(collector.get_actor.remote())
+                future = run_eval_episode.remote(args=args, player_id=int(np.random.uniform()<0.5), tracker=tracker, actor=actor, collector=collector)
                 evaluation_outstanding.append(future)
 
             time.sleep(0.05)
@@ -179,16 +181,13 @@ def main():
         retra.RoleAdvantageFormatter(), # normalize rewards for role advantage # TODO worth moving to step?
     ])
     step_reward_transformation = retra.ComposeStepRewardTransforms([
-        retra.RewardForThinkTags(reward=args.format_reward_think), # +0.25 for correct <think></think> tags
-        retra.PenaltyForInvalidMove(reward=args.format_reward_valid_move, penalty=args.format_penalty_invalid_move), 
+        # retra.RewardForThinkTags(reward=args.format_reward_think), # +0.25 for correct <think></think> tags
+        # retra.PenaltyForInvalidMove(reward=args.format_reward_valid_move, penalty=args.format_penalty_invalid_move), 
     ])
+    step_reward_transformation = None
     sampling_reward_transformation = retra.ComposeSamplingRewardTransforms([
         retra.NormalizeRewards() # normalize the sampled batch
     ])
-
-    
-
-    
     
     ray.init(num_gpus=args.num_actors+args.num_learners, log_to_driver=args.debugging)
 
