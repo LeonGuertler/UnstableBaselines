@@ -32,3 +32,13 @@ OBSERVATION_FORMATTING = {
 ACTION_EXTRACTION = {
     "default": extract_action_and_format_feedback
 }
+
+
+
+# other prompt/output utils
+def truncate_after_boxed(raw_text: str) -> str:
+    match = re.search(r"\\boxed\{.*?\}", raw_text) # Match \boxed{...} including the prefix
+    if match:
+        return raw_text[:match.end()]
+    else:
+        return raw_text
