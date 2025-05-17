@@ -19,7 +19,7 @@ from trajectory_buffer import Trajectory, Step, StepBuffer, WandBTracker
 from utils.asserts import assert_args
 from utils.arguments import get_args
 from utils.local_files import initialize_local_folder_structure
-from utils.local_textarena_modules import FirstLastObservationWrapper, LLMObservationWrapper
+from utils.local_textarena_modules import FirstLastObservationWrapper, LLMObservationWrapper, ClipCharactersActionWrapper
 from utils.templates import OBSERVATION_FORMATTING, ACTION_EXTRACTION, truncate_after_boxed
 
 
