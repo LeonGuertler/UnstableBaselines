@@ -180,7 +180,7 @@ wandb/*
 TorchTrainer*
 checkpoint*
 # data*
-checkpoint*
+checkpoint/*
 outputs*
 sandbox.py
 lora_ckpt.zip
