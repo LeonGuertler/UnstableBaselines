@@ -1,4 +1,4 @@
-# unstable-baselines
+# unstable-baselines (WIP)
 (it's calles `unstable-baselines` becuase the maintained OpenAI baselines package is called `stable-baselines`)
 
 
