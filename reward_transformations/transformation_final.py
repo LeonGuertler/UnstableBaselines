@@ -1,8 +1,9 @@
-from typing import Dict, List, Tuple, Union
+import copy
+from typing import Dict, List, Tuple, Union, Optional
 FINAL_REWARDS_FORMAT = Dict[int, Union[float, int]]
 
 class FinalRewardTransform:
-    def __call__(self, x: FINAL_REWARDS_FORMAT) -> FINAL_REWARDS_FORMAT:
+    def __call__(self, x: FINAL_REWARDS_FORMAT, env_id: str) -> FINAL_REWARDS_FORMAT:
         raise NotImplementedError
 
 class ComposeFinalRewardTransforms:
@@ -15,9 +16,9 @@ class ComposeFinalRewardTransforms:
     def register(self, transform: FinalRewardTransform):
         self.transforms.append(transform)
 
-    def __call__(self, x: FINAL_REWARDS_FORMAT) -> FINAL_REWARDS_FORMAT:
+    def __call__(self, x: FINAL_REWARDS_FORMAT, env_id: Optional[str] = None) -> FINAL_REWARDS_FORMAT:
         for t in self.transforms:
-            x = t(x)
+            x = t(x, env_id)
         return x 
 
 
@@ -27,7 +28,7 @@ class WinDrawLossFormatter(FinalRewardTransform):
         self.draw_reward = draw_reward
         self.loss_reward = loss_reward
 
-    def __call__(self, x: FINAL_REWARDS_FORMAT) -> FINAL_REWARDS_FORMAT:
+    def __call__(self, x: FINAL_REWARDS_FORMAT, env_id: str) -> FINAL_REWARDS_FORMAT:
         x = x.copy()
         assert len(x)==2, f"WinDrawLossFormatter only works for two-player games. Recieved final reward: {x}"
         if x[0]<x[1]:
@@ -43,12 +44,14 @@ class WinDrawLossFormatter(FinalRewardTransform):
 
 class RoleAdvantageFormatter(FinalRewardTransform):
     def __init__(self, role_advantage: Dict[int, float]={0:0.0, 1:0.0}, tau: float=0.01):
-        self.role_advantage = role_advantage
+        self.default_role_advantage = role_advantage
+        self.role_advantage_dict = {}
         self.tau = tau
     
-    def __call__(self, x: FINAL_REWARDS_FORMAT) -> FINAL_REWARDS_FORMAT:
+    def __call__(self, x: FINAL_REWARDS_FORMAT, env_id: str) -> FINAL_REWARDS_FORMAT:
+        if env_id not in self.role_advantage_dict: self.role_advantage_dict[env_id] = copy.copy(self.default_role_advantage)
         x = x.copy()
         for pid in x.keys():
-            self.role_advantage[pid] = (1-self.tau) * self.role_advantage[pid] + self.tau * x[pid]
-            x[pid] -= self.role_advantage[pid]
+            self.role_advantage_dict[env_id][pid] = (1-self.tau) * self.role_advantage_dict[env_id][pid] + self.tau * x[pid]
+            x[pid] -= self.role_advantage_dict[env_id][pid]
         return x

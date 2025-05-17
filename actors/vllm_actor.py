@@ -7,15 +7,16 @@ import ray, torch, vllm
 from vllm import EngineArgs, LLMEngine, SamplingParams
 from vllm.lora.request import LoRARequest
 
+
 class VLLMActor:
     def __init__(self, args):
-        gpu_ids = ray.get_gpu_ids() 
+        gpu_ids = ray.get_gpu_ids()
         os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, gpu_ids))
         torch.cuda.set_device(0)
-
         self.args = args
+
         engine_args = EngineArgs(
-            model=args.model_name, enable_lora=True, max_loras=args.vllm_max_loras, max_lora_rank=args.lora_rank, 
+            model=args.model_name, enable_lora=True, max_loras=args.vllm_max_loras, max_lora_rank=args.lora_rank,
             max_cpu_loras=args.vllm_max_loras, max_num_seqs=args.max_vllm_seq, task="generate"
         )
         self.engine = LLMEngine.from_engine_args(engine_args)

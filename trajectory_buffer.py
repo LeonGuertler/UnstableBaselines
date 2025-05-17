@@ -8,6 +8,7 @@ from typing import List, Dict, Optional, Tuple, Callable
 from utils.local_files import write_eval_data_to_file, write_training_data_to_file
 
 
+
 @dataclass
 class Trajectory:
     pid: List[int] = field(default_factory=list); obs: List[str] = field(default_factory=list)
@@ -29,8 +30,8 @@ class StepBuffer:
         self.steps: List[Step] = []
         self.training_steps = 0
 
-    def add_trajectory(self, trajectory: Trajectory, current_checkpoint_pid: Optional[int] = None):
-        transformed_rewards = self.final_reward_transformation(trajectory.final_rewards) # apply final rewards transformations
+    def add_trajectory(self, trajectory: Trajectory, env_id: str, current_checkpoint_pid: Optional[int]):
+        transformed_rewards = self.final_reward_transformation(trajectory.final_rewards, env_id=env_id) # apply final rewards transformations
         n = len(trajectory.pid)
         for i in range(n):
             if current_checkpoint_pid==trajectory.pid[i] or self.args.use_all_data:
@@ -71,9 +72,9 @@ class WandBTracker:
 
         self.wandb_name = args.wandb_name 
         wandb.init(project=args.wandb_project_name, name=self.wandb_name, config=args)
-        self.metrics = {"collection": {}, "evaluation": {}} # Metric containers
-        self.eval_ep_count = {}; self.num_trajectories = {} # Core counters
-        self.std_metrics = ["Player Rewards", "Game Length"]
+        self.metrics = {"collection": {"all": {}}, "evaluation": {"all": {}}} # Metric containers
+        self.eval_ep_count = {"all":0}; self.num_trajectories = {"all":0} # Core counters
+        self.std_metrics = ["Player Rewards", "Game Length", "Response Length (avg char)", "Observation Length (avg char)"]
 
     def update_metric(self, name, value, prefix, env_id):
         if env_id not in self.metrics[prefix]:
@@ -81,6 +82,10 @@ class WandBTracker:
         if name not in self.metrics[prefix][env_id]:
             self.metrics[prefix][env_id][name] = deque(maxlen=self.ma_range)
         self.metrics[prefix][env_id][name].append(value)
+
+        if name not in self.metrics[prefix]["all"]:
+            self.metrics[prefix]["all"][name] = deque(maxlen=self.ma_range)
+        self.metrics[prefix]["all"][name].append(value)
 
     def log_metrics(self, prefix):
         for env_id in self.metrics[prefix]:
@@ -112,10 +117,13 @@ class WandBTracker:
         # Save CSV
         self.log_metrics("evaluation")
         if episode_info:
-            filename = os.path.join(self.args.output_dir_eval, f"{env_id}-episode-{self.eval_ep_count[env_id]}-{outcome_metric.split()[0].lower()}.csv")
+            foldername = os.path.join(self.args.output_dir_eval, env_id)
+            os.makedirs(foldername, exist_ok=True)
+            filename = os.path.join(foldername, f"episode-{self.eval_ep_count[env_id]}-{outcome_metric.split()[0].lower()}.csv")
             write_eval_data_to_file(episode_info=episode_info, filename=filename)
             wandb.save(filename)
         self.eval_ep_count[env_id] += 1
+        self.eval_ep_count["all"] += 1
 
     def add_trajectory(self, trajectory: Trajectory, current_checkpoint_pid: int, env_id: str):
         if env_id not in self.num_trajectories: self.num_trajectories[env_id] = 0
@@ -137,5 +145,7 @@ class WandBTracker:
                 self.update_metric("Format Success Rate", int(trajectory.format_feedbacks[i]["has_think"]), "collection", env_id)
                 self.update_metric("Format Invalid Move Rate", int(trajectory.format_feedbacks[i]["invalid_move"]), "collection", env_id)
                 self.update_metric("Response Length (avg char)", len(trajectory.actions[i]), "collection", env_id)
+                self.update_metric("Observation Length (avg char)", len(trajectory.obs[i]), "collection", env_id)
         self.num_trajectories[env_id] += 1
+        self.num_trajectories["all"] += 1
         self.log_metrics("collection")

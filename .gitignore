@@ -181,3 +181,5 @@ TorchTrainer*
 checkpoint*
 # data*
 checkpoint*
+outputs*
+sandbox.py
