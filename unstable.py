@@ -19,7 +19,7 @@ from trajectory_buffer import Trajectory, Step, StepBuffer, WandBTracker
 from utils.asserts import assert_args
 from utils.arguments import get_args
 from utils.local_files import initialize_local_folder_structure
-from utils.local_textarena_modules import FirstLastObservationWrapper
+from utils.local_textarena_modules import FirstLastObservationWrapper, LLMObservationWrapper
 from utils.templates import OBSERVATION_FORMATTING, ACTION_EXTRACTION, truncate_after_boxed
 
 
@@ -55,10 +55,19 @@ class Collector:
         self.lora_paths.append(new_path)
 
 
+# def make_env(env_id: str):
+#     env = ta.make(env_id); env = FirstLastObservationWrapper(env)
+#     env.reset(num_players=2); env.state.error_allowance = 0
+#     return env, env.env_id
+
 def make_env(env_id: str):
-    env = ta.make(env_id); env = FirstLastObservationWrapper(env)
-    env.reset(num_players=2); env.state.error_allowance = 0
+    env = ta.make(env_id); 
+    env = LLMObservationWrapper(env)
+    env = ClipCharactersActionWrapper(env, max_num_characters=250)
+    env.reset(num_players=2); 
+    # env.state.error_allowance = 0
     return env, env.env_id
+
 
 @ray.remote(num_cpus=0.1)
 def collect_episode_once(args, player_id: int, buffer, tracker, actor, collector):
