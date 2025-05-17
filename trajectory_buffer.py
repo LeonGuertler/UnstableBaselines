@@ -69,13 +69,12 @@ class WandBTracker:
     def __init__(self, args):
         self.args = args 
         self.ma_range = args.ma_range
-        self.ma_range_all = 1000
 
         self.wandb_name = args.wandb_name 
         wandb.init(project=args.wandb_project_name, name=self.wandb_name, config=args)
         self.metrics = {"collection": {"all": {}}, "evaluation": {"all": {}}} # Metric containers
         self.eval_ep_count = {"all":0}; self.num_trajectories = {"all":0} # Core counters
-        self.std_metrics = ["Player Rewards", "Game Length"]
+        self.std_metrics = ["Player Rewards", "Game Length", "Response Length (avg char)", "Observation Length (avg char)"]
 
     def update_metric(self, name, value, prefix, env_id):
         if env_id not in self.metrics[prefix]:
@@ -85,13 +84,12 @@ class WandBTracker:
         self.metrics[prefix][env_id][name].append(value)
 
         if name not in self.metrics[prefix]["all"]:
-            self.metrics[prefix]["all"][name] = deque(maxlen=self.ma_range_all)
+            self.metrics[prefix]["all"][name] = deque(maxlen=self.ma_range)
         self.metrics[prefix]["all"][name].append(value)
 
     def log_metrics(self, prefix):
         for env_id in self.metrics[prefix]:
-            ma_range = self.ma_range_all if env_id=="all" else self.ma_range
-            ma_tag  = f"{prefix} '{env_id}' (MA - range={ma_range})"
+            ma_tag  = f"{prefix} '{env_id}' (MA - range={self.ma_range})"
             wandb_dict = {f"{ma_tag}/Num Trajectories": self.num_trajectories[env_id] if prefix=="collection" else self.eval_ep_count[env_id]}
             for name in self.metrics[prefix][env_id]:
                 if self.metrics[prefix][env_id][name]:
@@ -147,6 +145,7 @@ class WandBTracker:
                 self.update_metric("Format Success Rate", int(trajectory.format_feedbacks[i]["has_think"]), "collection", env_id)
                 self.update_metric("Format Invalid Move Rate", int(trajectory.format_feedbacks[i]["invalid_move"]), "collection", env_id)
                 self.update_metric("Response Length (avg char)", len(trajectory.actions[i]), "collection", env_id)
+                self.update_metric("Observation Length (avg char)", len(trajectory.obs[i]), "collection", env_id)
         self.num_trajectories[env_id] += 1
         self.num_trajectories["all"] += 1
         self.log_metrics("collection")
