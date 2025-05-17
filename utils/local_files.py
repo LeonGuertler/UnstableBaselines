@@ -31,7 +31,9 @@ def initialize_local_folder_structure(args):
     os.makedirs(args.output_dir_checkpoints, exist_ok=True)
 
     # set absolute paths where necessary
-    args.initial_lora_path = os.path.abspath(args.initial_lora_path)
+    if args.initial_lora_path is not None and args.initial_lora_path.lower() != "none":
+        print("SETTING ABSOLUTE LORA PATH")
+        args.initial_lora_path = os.path.abspath(args.initial_lora_path)
     print(f"Logs are located at: {args.output_dir_logs}")
     return args
 
