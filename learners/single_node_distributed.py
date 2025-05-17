@@ -41,8 +41,8 @@ def train_loop_per_worker(cfg):
 
     # load base + LoRA
     base = AutoModelForCausalLM.from_pretrained(args.model_name, trust_remote_code=True, torch_dtype=torch.bfloat16)
-    peft_model = build_lora_model(model=base, r=args.lora_rank, alpha=args.lora_alpha, dropout=args.lora_dropout).to(device)
-
+    peft_model = build_lora_model(model=base, args=args).to(device)
+    
     # load initial weights if provided
     if args.initial_lora_path and args.initial_lora_path.lower() != "none":
         load_lora_state(peft_model, args.initial_lora_path)

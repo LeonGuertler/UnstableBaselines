@@ -19,7 +19,7 @@ from trajectory_buffer import Trajectory, Step, StepBuffer, WandBTracker
 from utils.asserts import assert_args
 from utils.arguments import get_args
 from utils.local_files import initialize_local_folder_structure
-from utils.local_textarena_modules import FirstLastObservationWrapper, LLMObservationWrapper
+from utils.local_textarena_modules import FirstLastObservationWrapper, LLMObservationWrapper, ClipCharactersActionWrapper
 from utils.templates import OBSERVATION_FORMATTING, ACTION_EXTRACTION, truncate_after_boxed
 
 
@@ -154,12 +154,14 @@ def start_actor_loop(args, collector, buffer, tracker):
 
             # Replenish collection
             if len(collection_outstanding) < args.num_collection_workers:
-                future = collect_episode_once.remote(args=args, player_id=int(np.random.uniform()<0.5), buffer=buffer, tracker=tracker, actor=ray.get(collector.get_actor.remote()), collector=collector)
+                actor = ray.get(collector.get_actor.remote())
+                future = collect_episode_once.remote(args=args, player_id=int(np.random.uniform()<0.5), buffer=buffer, tracker=tracker, actor=actor, collector=collector)
                 collection_outstanding.append(future)
 
             # Replenish evaluation
             if len(evaluation_outstanding) < args.num_evaluation_workers:
-                future = run_eval_episode.remote(args=args, player_id=int(np.random.uniform()<0.5), tracker=tracker, actor=ray.get(collector.get_actor.remote()), collector=collector)
+                actor = ray.get(collector.get_actor.remote())
+                future = run_eval_episode.remote(args=args, player_id=int(np.random.uniform()<0.5), tracker=tracker, actor=actor, collector=collector)
                 evaluation_outstanding.append(future)
 
             time.sleep(0.05)
