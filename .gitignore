@@ -193,3 +193,4 @@ iteration*outputs/
 sft/sft*
 checkpoint-3.zip
 checkpoint*
+*.zip
