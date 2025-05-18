@@ -5,16 +5,11 @@ from peft import LoraConfig, get_peft_model, get_peft_model_state_dict, set_peft
 
 def build_lora_model(model, args): 
     cfg = LoraConfig(
-        r=args.lora_rank,
-        lora_alpha=args.lora_alpha,
-        lora_dropout=args.lora_dropout,
-        bias="none",
+        r=args.lora_rank, lora_alpha=args.lora_alpha, lora_dropout=args.lora_dropout, bias="none",
         target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
-        task_type="CAUSAL_LM",
-        use_rslora=args.use_rslora,
+        task_type="CAUSAL_LM", use_rslora=args.use_rslora,
     )
     return get_peft_model(model, cfg)
-
 
 
 def load_lora_state(peft_model, ckpt_dir: str | pathlib.Path):

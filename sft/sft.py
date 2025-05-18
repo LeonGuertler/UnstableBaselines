@@ -29,18 +29,27 @@ def build_lora_model(model, args):
 #     full_trace = f"{reasoning}\n\\boxed{{{action}}}"
 #     return full_observation, full_trace
 
-def apply_qwen3_template(observation: str) -> str:
+# def apply_qwen3_template(observation: str) -> str:
+#     return (
+#         f"<|im_start|>user\nYou are playing a two-player zero-sum game. Make valid actions to win.\nObservation: {observation}"
+#         "\nPlease reason step by step, and put your final answer within \\boxed{}.<|im_end|>\n"
+#         "<|im_start|>assistant\n"
+#     )
+
+def apply_default_template(observation: str) -> str:
     return (
-        f"<|im_start|>user\nYou are playing a two-player zero-sum game. Make valid actions to win.\nObservation: {observation}"
-        "\nPlease reason step by step, and put your final answer within \\boxed{}.<|im_end|>\n"
-        "<|im_start|>assistant\n"
+        "You are playing a two-player zero-sum game. Make valid moves to win. "
+        "You should first reason about your next move, and then submit the move enclosed by \\boxed{}."
+        f"\nObservation: {observation}\n"
     )
 
 def format_trace(observation, reasoning, action):
     # instruction = "You are playing a two-player zero-sum game. Make valid moves to win. You should first reason about your next move, and then submit the move enclosed by \\boxed{}."
     # full_observation = instruction + f"\nObservation: {observation}\n"
-    full_observation = apply_qwen3_template(observation=observation)
+    full_observation = apply_default_template(observation=observation)
     full_trace = f"{reasoning}\n\\boxed{{{action}}}"
+    # print(full_observation)
+    # input(full_trace)
     return full_observation, full_trace
 
 

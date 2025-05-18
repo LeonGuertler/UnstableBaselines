@@ -74,26 +74,18 @@ def collect_episode_once(args, player_id: int, buffer, tracker, actor, collector
     env, env_id = make_env(env_id=args.train_env_id)
     traj = Trajectory()
     done, steps = False, 0
-    # lora_paths = {player_id: collector.get_current_lora, 1-player_id: collector.get_random_lora}
-    lora_paths = {player_id: collector.get_current_lora, 1-player_id: collector.get_current_lora}
+    lora_paths = {player_id: collector.get_current_lora, 1-player_id: collector.get_previous_lora}
     fixed_opponent = ta.agents.OpenRouterAgent(model_name=args.eval_model_name)
     while not done and steps < args.max_env_steps:
         pid, obs = env.get_observation()
-        if pid==player_id:
-            formatted_prompt = OBSERVATION_FORMATTING[args.observation_format_template](observation=obs)
-            # print("formatted_prompt", formatted_prompt)
-            lora_path = ray.get(lora_paths[pid].remote())
-            action = ray.get(actor.submit_prompt.remote(prompt=formatted_prompt, lora_path=lora_path))
-            # print("raw_action", action)
-            action = truncate_after_boxed(action) # extract trunc act
-            extracted_action, format_feedback = ACTION_EXTRACTION[args.action_extraction_template](raw_action=action) # extract environment action
-            # print('submitted action: ', extracted_action)
-        else:
-            formatted_prompt = obs
-            extracted_action = fixed_opponent(obs)
-            action = extracted_action
-            format_feedback = {"has_think": False, "has_answer": False, "order_correct": False}
-
+        formatted_prompt = OBSERVATION_FORMATTING[args.observation_format_template](observation=obs)
+        # print("formatted_prompt", formatted_prompt)
+        lora_path = ray.get(lora_paths[pid].remote())
+        action = ray.get(actor.submit_prompt.remote(prompt=formatted_prompt, lora_path=lora_path))
+        # print("raw_action", action)
+        action = truncate_after_boxed(action) # extract trunc act
+        extracted_action, format_feedback = ACTION_EXTRACTION[args.action_extraction_template](raw_action=action) # extract environment action
+        # print('submitted action: ', extracted_action)
         done, _ = env.step(action=extracted_action)
         
         traj.pid.append(pid); traj.obs.append(formatted_prompt)
