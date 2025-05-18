@@ -192,3 +192,4 @@ iteration*outputs/
 *.cache
 sft/sft*
 checkpoint-3.zip
+checkpoint*
