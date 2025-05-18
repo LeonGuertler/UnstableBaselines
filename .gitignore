@@ -190,3 +190,4 @@ iteration*outputs/
 *.log
 *.tmp
 *.cache
+sft/sft*
