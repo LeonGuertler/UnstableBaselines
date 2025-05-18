@@ -4,25 +4,25 @@ python3 unstable.py \
     --eval_env_id "SimpleTak-v0,TicTacToe-v0,ConnectFour-v0,Snake-v0"\
     --wandb \
     --debugging True \
-    --num_actors 2 \
+    --num_actors 1 \
     --num_learners 1 \
     --lr 5e-5 \
     --batch_size 384 \
     --gradient_accumulation_steps 384 \
-    --max_tokens 4096 \
+    --max_tokens 16 \
     --gradient_checkpointing \
     --bf16_training \
     --num_collection_workers 1 \
-    --num_evaluation_workers 1 \
+    --num_evaluation_workers 0 \
     --lora_rank 128 \
     --lora_alpha 256 \
     --lora_dropout 0 \
-    --initial_lora_path None \
+    --initial_lora_path "checkpoint-3" \
     --self_play_opponent_lag_lower 5 \
     --self_play_opponent_lag_upper 11 \
     --format_reward_think 0.0 \
     --format_reward_valid_move 0.0 \
-    --format_penalty_invalid_move 0.0 
+    --format_penalty_invalid_move 0.0
 
 
 # --batch_size 512 \

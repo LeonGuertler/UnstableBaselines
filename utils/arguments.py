@@ -15,7 +15,7 @@ def get_args():
     ap.add_argument("--gradient_accumulation_steps", type=int, default=64)
     ap.add_argument("--gradient_checkpointing", action="store_true") 
     ap.add_argument("--bf16_training", action="store_true") 
-    ap.add_argument("--gradient_clip", type=float, default=1.0)
+    ap.add_argument("--gradient_clip", type=float, default=0.0002)
 
     # reward design
     ap.add_argument("--format_reward_think", type=float, default=0.25)

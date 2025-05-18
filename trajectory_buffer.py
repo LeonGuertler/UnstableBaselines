@@ -31,12 +31,17 @@ class StepBuffer:
         self.training_steps = 0
 
     def add_trajectory(self, trajectory: Trajectory, env_id: str, current_checkpoint_pid: Optional[int]):
+        # print("TRYING TO ADD TO BUFFER")
         transformed_rewards = self.final_reward_transformation(trajectory.final_rewards, env_id=env_id) # apply final rewards transformations
+        # print("REWARD TRANSFORMED")
+        # print(trajectory)
         n = len(trajectory.pid)
         for i in range(n):
             if current_checkpoint_pid==trajectory.pid[i] or self.args.use_all_data:
                 reward = transformed_rewards[trajectory.pid[i]]
+                # print(f"adding step reward: {reward}")
                 step_reward = self.step_reward_transformation(trajectory=trajectory, step_index=i, base_reward=reward) # apply step reward transformations
+                # print("adding to steps")
                 self.steps.append(Step(pid=trajectory.pid[i], obs=trajectory.obs[i], act=trajectory.actions[i], reward=step_reward))
         print(f"BUFFER SIZE: {len(self.steps)}, added {n} steps")
 

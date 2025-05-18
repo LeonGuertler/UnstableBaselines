@@ -83,7 +83,7 @@ def collect_episode_once(args, player_id: int, buffer, tracker, actor, collector
         lora_path = ray.get(lora_paths[pid].remote())
         action = ray.get(actor.submit_prompt.remote(prompt=formatted_prompt, lora_path=lora_path))
         # print("raw_action", action)
-        # action = truncate_after_boxed(action) # extract trunc act
+        action = truncate_after_boxed(action) # extract trunc act
         extracted_action, format_feedback = ACTION_EXTRACTION[args.action_extraction_template](raw_action=action) # extract environment action
         # print('submitted action: ', extracted_action)
         done, _ = env.step(action=extracted_action)
@@ -129,8 +129,9 @@ def run_eval_episode(args, player_id: int, tracker, actor, collector):
             formatted_prompt = OBSERVATION_FORMATTING[args.observation_format_template](observation=obs)
             lora_path = ray.get(collector.get_current_lora.remote())
             raw_action = ray.get(agent.submit_prompt.remote(prompt=formatted_prompt, lora_path=lora_path))
+            raw_action = truncate_after_boxed(raw_action)
             action, format_feedback = ACTION_EXTRACTION[args.action_extraction_template](raw_action=raw_action)
-        
+            #action = truncate_after_boxed(action)
         done, info = env.step(action=action) # submit to env
         step_info = {
             "pid": pid, "model_name": model_name, "observation": obs, "full_action": raw_action, 
@@ -184,10 +185,9 @@ def main():
         retra.RoleAdvantageFormatter(), # normalize rewards for role advantage # TODO worth moving to step?
     ])
     step_reward_transformation = retra.ComposeStepRewardTransforms([
-        # retra.RewardForThinkTags(reward=args.format_reward_think), # +0.25 for correct <think></think> tags
-        # retra.PenaltyForInvalidMove(reward=args.format_reward_valid_move, penalty=args.format_penalty_invalid_move), 
+        retra.RewardForThinkTags(reward=args.format_reward_think), # +0.25 for correct <think></think> tags
+        retra.PenaltyForInvalidMove(reward=args.format_reward_valid_move, penalty=args.format_penalty_invalid_move), 
     ])
-    step_reward_transformation = None
     sampling_reward_transformation = retra.ComposeSamplingRewardTransforms([
         retra.NormalizeRewards() # normalize the sampled batch
     ])

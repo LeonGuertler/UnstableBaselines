@@ -42,7 +42,7 @@ class LLMObservationWrapper(ta.ObservationWrapper):
                     sender_name = self.env.state.role_mapping.get(sender_id, f"Player {sender_id}")
                 str_observation += f"\n[{sender_name}] {message}"
 
-        return str_observation
+        return str_observation + "Please reason about your next action and then return it within \\boxed{}"
 
     def observation(self, player_id: int, observation: Optional[ta.Observations]):
         if observation is None:

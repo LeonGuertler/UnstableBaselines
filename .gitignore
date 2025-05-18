@@ -178,10 +178,15 @@ cython_debug/
 wandb/*
 *.csv
 TorchTrainer*
-checkpoint*
+# checkpoint*
 # data*
 checkpoint/*
 outputs*
 sandbox.py
 lora_ckpt.zip
-iteration*
+iteration*outputs/
+*.pt
+*.safetensors
+*.log
+*.tmp
+*.cache

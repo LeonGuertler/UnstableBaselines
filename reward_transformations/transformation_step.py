@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Optional
 from trajectory_buffer import Trajectory
 
 
@@ -8,7 +8,7 @@ class StepRewardTransform:
         raise NotImplementedError
 
 class ComposeStepRewardTransforms:
-    def __init__(self, transforms: List[StepRewardTransform]):
+    def __init__(self, transforms: Optional[List[StepRewardTransform]]=None):
         self.transforms = transforms
 
     def __repr__(self):
@@ -18,8 +18,9 @@ class ComposeStepRewardTransforms:
         self.transforms.append(transform)
 
     def __call__(self, trajectory: Trajectory, step_index: int, base_reward: float) -> float:
-        for t in self.transforms:
-            base_reward = t(trajectory, step_index, base_reward)
+        if self.transforms: 
+            for t in self.transforms:
+                base_reward = t(trajectory, step_index, base_reward)
         return base_reward
 
 
