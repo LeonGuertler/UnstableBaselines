@@ -57,6 +57,7 @@ def get_args():
     ap.add_argument("--wandb", action="store_true") 
     ap.add_argument("--wandb_project_name", type=str, default="UnstableBaselines")
     ap.add_argument("--ma_range", type=int, default=100)
+    ap.add_argument("--exploration_env_id", type=lambda arg: arg.split(',') if ',' in arg else arg, default=None, help="Single env as string or multiple envs as comma-separated string")
 
     # lora
     ap.add_argument("--lora_rank", type=int, default=32)

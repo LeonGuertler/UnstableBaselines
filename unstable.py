@@ -2,6 +2,7 @@ import os, time, random, argparse, threading
 import numpy as np
 from typing import List, Dict
 
+import re
 import ray, torch
 from ray.train.torch import TorchTrainer
 from ray.air.config import ScalingConfig
@@ -99,16 +100,14 @@ def collect_episode_once(args, player_id: int, buffer, tracker, actor, collector
         formatted_prompt = OBSERVATION_FORMATTING[args.observation_format_template](observation=obs)
         lora_path = ray.get(lora_paths[pid].remote())
         action = ray.get(actor.submit_prompt.remote(prompt=formatted_prompt, lora_path=lora_path))
-        # print("ACTION", action)
         
         extracted_action, format_feedback = ACTION_EXTRACTION[args.action_extraction_template](raw_action=action) # extract environment action
-        # print("EXTRACTED_ACTION", extracted_action)
         done, info = env.step(action=extracted_action)
         
-        traj.pid.append(pid); traj.obs.append(formatted_prompt)
-        traj.actions.append(action); traj.format_feedbacks.append(format_feedback)
+        traj.pid.append(pid); traj.obs.append(formatted_prompt); traj.board_states.append(str(env.state.game_state["board"]))
+        traj.actions.append(action); traj.format_feedbacks.append(format_feedback); traj.extracted_actions.append(extracted_action)
+        traj.infos.append(info)
         steps += 1
-        print("STEP_NR", steps)
 
     traj.final_rewards = env.close() if done else {0: 0, 1: 0}
     # add an invlid move format reward
