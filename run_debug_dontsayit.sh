@@ -1,0 +1,29 @@
+python3 unstable.py \
+    --model_name "Qwen/Qwen3-0.6B-base" \
+    --train_env_id "DontSayIt-v0:2" \
+    --eval_env_id "DontSayIt-v0:2"\
+    --wandb \
+    --num_actors 1 \
+    --num_learners 1 \
+    --lr 1e-4 \
+    --batch_size 384 \
+    --gradient_accumulation_steps 384 \
+    --max_tokens 500 \
+    --gradient_checkpointing \
+    --bf16_training \
+    --num_collection_workers 1 \
+    --num_evaluation_workers 0 \
+    --lora_rank 32 \
+    --lora_alpha 32 \
+    --lora_dropout 0 \
+    --self_play_opponent_lag_lower 1 \
+    --self_play_opponent_lag_upper 5 \
+    --format_reward_think 1.5 \
+    --format_reward_valid_move 1.0 \
+    --format_penalty_invalid_move -1.0 \
+    --observation_format_template "qwen3" \
+    --opponent_type "fixed" \
+    --fixed_opponents "google/gemini-2.5-flash-preview-05-20" \
+    --env_max_turns 6 \
+    --action_extraction_template "xml"\
+    --observation_format_template "xml"

@@ -1,6 +1,6 @@
 import os, time, random, argparse, threading, traceback
 import numpy as np
-from typing import List, Dict
+from typing import List, Dict, Optional
 from dotenv import load_dotenv
 
 import ray, torch
@@ -64,28 +64,51 @@ class Collector:
 #     env.reset(num_players=2); env.state.error_allowance = 0
 #     return env, env.env_id
 
-def make_env(env_id: str, num_players: int):
-    env = ta.make(env_id)
-    env = ta.wrappers.GameMessageObservationWrapper(env) # TODO should be adjustable by environment
+def make_env(env_id: str, num_players: int, max_turns: Optional[int] = None):
+    env_kwargs = {}
+    if max_turns is not None:
+        env_kwargs["max_turns"] = max_turns
+    env = ta.make(env_id, **env_kwargs)
+    # env = ta.wrappers.LLMObservationWrapper(env) # TODO should be adjustable by environment
+    env = ta.wrappers.ClipWordsActionWrapper(env, max_num_words=40)
+    print(f"env: {env}")
+    print(f"env type: {type(env)}")
     env.reset(num_players=num_players)
     # ; env.state.error_allowance = 0
     return env
 
 @ray.remote(num_cpus=0.1)
 def collect_episode_once(args, player_id: int, env_id: str, num_players: int, buffer, tracker, actor, collector):
-    env = make_env(env_id=env_id, num_players=num_players)
+    env = make_env(env_id=env_id, num_players=num_players, max_turns=args.env_max_turns)
     traj = Trajectory()
     done, turns = False, 0
 
+    # Print episode initialization information
+    print(f"\n[EPISODE STARTING] Environment: {env_id}, Number of Players: {num_players}")
+    print(f"  Our TRAINED MODEL is Player ID: {player_id}")
+    print(f"  Opponent type for this episode: {args.opponent_type}")
+    if args.opponent_type == "fixed":
+        print(f"  Fixed opponent model name(s): {args.fixed_opponents}")
+    elif args.opponent_type == "self_play":
+        print(f"  Self-play opponent will use a previously saved LoRA.")
+    opponent_player_ids = [i for i in range(num_players) if i != player_id]
+    print(f"  Opponent Player ID(s): {opponent_player_ids}")
+
+
     while not done:
+        print(f"\n--- Turn Number: {turns + 1} ---")
         pid, obs = env.get_observation()
+        print(f"  Player to move: PID {pid}")
 
         if pid == player_id: # current model moves
+            print(f"  Action by: TRAINED MODEL (Player {pid})")
             lora_path = ray.get(collector.get_current_lora.remote()) # get current lora path
-            formatted_prompt = OBSERVATION_FORMATTING[args.observation_format_template](observation=obs) # format observation
+            formatted_prompt = OBSERVATION_FORMATTING['qwen3_xml'](observation=obs) # format observation
+            print(f"FORMATTED PROMPT:\n-----------\n {formatted_prompt}\n-----------\n")
             action = ray.get(actor.submit_prompt.remote(prompt=formatted_prompt, lora_path=lora_path)) # get model action
+            print(f"ACTION:\n-----------\n {action}\n-----------\n")
             extracted_action, format_feedback = ACTION_EXTRACTION[args.action_extraction_template](raw_action=action) # extract environment action
-
+            print(f"EXTRACTED ACTION:\n-----------\n {extracted_action}\n-----------\n")
             done, info = env.step(action=extracted_action) # step in the environment
 
             # add to trajectory
@@ -96,25 +119,29 @@ def collect_episode_once(args, player_id: int, env_id: str, num_players: int, bu
             traj.format_feedbacks.append(format_feedback)
 
         else: # sample opponent action based on what is specified
+            print(f"  Action by: OPPONENT (Player {pid})")
             if args.opponent_type == "self_play": # sample from previous checkpoints
+                print(f"    Opponent type: SELF-PLAY")
+                formatted_prompt = OBSERVATION_FORMATTING['qwen3_xml'](observation=obs) # format observation
+                print(f"FORMATTED PROMPT:\n-----------\n {formatted_prompt}\n-----------\n")
                 lora_path = ray.get(collector.sample_prev_lora.remote()) # get current lora path
-                formatted_prompt = OBSERVATION_FORMATTING[args.observation_format_template](observation=obs) # format observation
                 action = ray.get(actor.submit_prompt.remote(prompt=formatted_prompt, lora_path=lora_path)) # get model action
-                action, _ = ACTION_EXTRACTION[args.action_extraction_template](raw_action=action) # extract environment action
-
             elif args.opponent_type == "fixed": # sample from fixed opponent
+                print(f"    Opponent type: FIXED (candidate models: {args.fixed_opponents})")
+                formatted_prompt = OBSERVATION_FORMATTING['xml'](observation=obs) # format observation
+                print(f"FORMATTED PROMPT:\n-----------\n {formatted_prompt}\n-----------\n")
                 fixed_opponent_agent = ta.agents.OpenRouterAgent(model_name=random.choice(args.fixed_opponents)) # TODO check if this is expensive (compute wise)
                 # TODO - given this is running a thread, we need to make sure we are actually sampling opponents, might always be the same. Maybe pass seed into thread
                 action = fixed_opponent_agent(obs)
+            print(f"ACTION:\n-----------\n {action}\n-----------\n")
+            extracted_action, _ = ACTION_EXTRACTION[args.action_extraction_template](raw_action=action) # extract environment action
+            print(f"EXTRACTED ACTION:\n-----------\n {extracted_action}\n-----------\n")
+            done, info = env.step(action=extracted_action) # step in the env
 
-            else:
-                raise NotImplementedError
-
-            done, info = env.step(action=action) # step in the env
         turns += 1 # increment turn counter
     
     traj.final_rewards = env.close() # get final game rewards
-    if info["end_by_invalid"] and pid==player_id:  traj.format_feedbacks[-1]["invalid_move"] = 1 # adjust final move to invalid as necessary
+    if info["end_by_invalid"] and pid==player_id:  traj.format_feedbacks[-1]["invalid_move"] = True # adjust final move to invalid as necessary
     traj.num_turns = turns
     print(f"GAME FINISHED< ADDING TO BUFFER. num turns: {turns} [steps by our model: {len(traj.pid)}]")
     ray.get(buffer.add_trajectory.remote(traj, player_id=player_id, env_id=env_id))
@@ -123,7 +150,7 @@ def collect_episode_once(args, player_id: int, env_id: str, num_players: int, bu
 
 @ray.remote(num_cpus=0.1)
 def run_eval_episode(args, player_id: int, env_id: str, num_players:int, tracker, actor, collector):
-    env = make_env(env_id=env_id, num_players=num_players)
+    env = make_env(env_id=env_id, num_players=num_players, max_turns=args.env_max_turns)
 
     episode_info = []
     done, turns = False, 0
@@ -187,14 +214,14 @@ def start_actor_loop(args, collector, buffer, tracker):
             if len(collection_outstanding) < args.num_collection_workers:
                 actor = ray.get(collector.get_actor.remote())
                 env_id, num_players, player_id = get_next_env_id(args=args, _type="train")
-                future = collect_episode_once.remote(args=args, player_id=player_id, env_id=env_id, num_players=num_players, buffer=buffer, tracker=tracker, actor=actor, collector=collector)
+                future = collect_episode_once.remote(args, player_id, env_id, num_players, buffer, tracker, actor, collector)
                 collection_outstanding.append(future)
 
             # Replenish evaluation
             if len(evaluation_outstanding) < args.num_evaluation_workers:
                 actor = ray.get(collector.get_actor.remote())
                 env_id, num_players, player_id = get_next_env_id(args=args, _type="eval")
-                future = run_eval_episode.remote(args=args, player_id=player_id, env_id=env_id, num_players=num_players, tracker=tracker, actor=actor, collector=collector)
+                future = run_eval_episode.remote(args, player_id, env_id, num_players, tracker, actor, collector)
                 evaluation_outstanding.append(future)
 
             time.sleep(0.05)
@@ -222,15 +249,16 @@ def main():
 
     ray.init(num_gpus=args.num_actors+args.num_learners)
 
+    # Instantiate StepBuffer
     buffer = StepBuffer.remote(
-        args=args,
+        args,
         final_reward_transformation=final_reward_transformation,
         step_reward_transformation=step_reward_transformation,
         sampling_reward_transformation=sampling_reward_transformation
     )
 
-    tracker = WandBTracker.remote(args=args)
-    collector = Collector.remote(args=args)
+    tracker = WandBTracker.remote(args)
+    collector = Collector.remote(args)
     ray.get(collector.initialize.remote(num_actors=args.num_actors))
     start_actor_loop(args=args, collector=collector, buffer=buffer, tracker=tracker)
 

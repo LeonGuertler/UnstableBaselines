@@ -48,6 +48,7 @@ def get_args():
     ap.add_argument("--temperature", type=float, default=0.7)
     ap.add_argument("--top_p", type=float, default=0.95)
     ap.add_argument("--max_tokens", type=int, default=2048)
+    ap.add_argument("--env_max_turns", type=int, default=None, help="Optional: Maximum number of turns for the environment(s). Overrides environment default if set.")
     ap.add_argument("--observation_format_template", type=str, default="default")
     ap.add_argument("--action_extraction_template", type=str, default="default")
     ap.add_argument("--self_play_opponent_lag_lower", type=int, default=7)
