@@ -3,7 +3,8 @@ python3 unstable.py \
     --train_env_id "SimpleTak-v0" \
     --eval_env_id "SimpleTak-v0,TicTacToe-v0"\
     --wandb \
-    --num_actors 3 \
+    --exploration_env_id "SimpleTak-v0" \
+    --num_actors 5 \
     --num_learners 1 \
     --lr 1e-4 \
     --batch_size 384 \
@@ -12,7 +13,7 @@ python3 unstable.py \
     --gradient_checkpointing \
     --bf16_training \
     --num_collection_workers 384 \
-    --num_evaluation_workers 32 \
+    --num_evaluation_workers 20 \
     --lora_rank 32 \
     --lora_alpha 32 \
     --lora_dropout 0 \
