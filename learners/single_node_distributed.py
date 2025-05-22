@@ -1,3 +1,4 @@
+import json
 import ray, torch, os, time, wandb
 from ray.train import get_context
 from ray.air import session
@@ -80,7 +81,17 @@ def train_loop_per_worker(cfg):
             peft_model = model.module if isinstance(model, torch.nn.parallel.DistributedDataParallel) else model
             peft_model.save_pretrained(checkpoint_folder_path)
             ray.get(collector.add_new_lora_paths.remote(checkpoint_folder_path))
-            session.report({"iteration": iteration})
+            if iteration % args.checkpoint_every == 0:
+                torch.save(optimizer.state_dict(), os.path.join(checkpoint_folder_path, "optimizer.pt"))
+                with open(os.path.join(checkpoint_folder_path, "metadata.json"), "w") as f:
+                    json.dump({
+                        "iteration": iteration,
+                        "learning_rate": optimizer.param_groups[0]["lr"],
+                        "grad_norm": avg_metrics["learner/grad_norm"] if "learner/grad_norm" in avg_metrics else None,
+                        "timestamp": time.time(),
+                    }, f)
+                print(f'Saving checkpoint to {checkpoint_folder_path}')
+                session.report({"iteration": iteration}, checkpoint=Checkpoint.from_directory(checkpoint_folder_path))
         iteration += 1
 
 

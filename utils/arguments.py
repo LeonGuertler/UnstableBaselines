@@ -52,6 +52,7 @@ def get_args():
     ap.add_argument("--save_strategy", type=str, default="best", choices=["steps"])
     ap.add_argument("--save_every_n_update_steps", type=int, default=3) #25)
     ap.add_argument("--log_training_data", type=bool, default=True)
+    ap.add_argument("--checkpoint_every", type=int, default=10) #25)
 
     # wandb & tracking params
     ap.add_argument("--wandb", action="store_true") 
