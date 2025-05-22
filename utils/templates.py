@@ -21,15 +21,15 @@ def qwen3_template(observation: str) -> str:
 def xml_template(observation: str) -> str:
     return (
         f"You are playing a two-player zero-sum game. Make valid actions to win.\nObservation: {observation}"
-        "\nIt is your turn to act next. Please reason step by step, and output your action wrapped in <action></action> tags.\n"
-        "For example, if your action is 'Lorem ipsum dolor sit amet', you should output <action>Lorem ipsum dolor sit amet</action>.\n"
+        "\nIt is your turn to act next. Please reason step by step, and output the message you want to share with the other player wrapped in <public></public> tags.\n"
+        "Example output:\n Understood! I should probably [...].\n <public>Hi! Have you ever[...]</public>\n"
     )
 
 def qwen3_xml_template(observation: str) -> str:
     return (
         f"<|im_start|>user\nYou are playing a two-player zero-sum game. Make valid actions to win.\nObservation: {observation}"
-        "\nIt is your turn to act next. Please reason step by step, and output your action wrapped in <action></action> tags.\n"
-        "For example, if your action is 'Lorem ipsum dolor sit amet', you should output <action>Lorem ipsum dolor sit amet</action>.<|im_end|>\n"
+        "\nIt is your turn to act next. Please reason step by step, and output the message you want to share with the other player wrapped in <public></public> tags.\n"
+        "Example output:\n Understood! I should probably [...].\n <public>Hi! Have you ever[...]</public>\n"
         "<|im_start|>assistant\n"
     )
 
@@ -52,7 +52,7 @@ def extract_action_and_format_feedback(raw_action: str) -> Tuple[str, Dict[str, 
     return action, format_feedback
     
 def extract_action_and_format_feedback_xml(raw_action: str) -> Tuple[str, Dict[str, bool]]:
-    matches = re.findall(r"<action>(.*?)</action>", raw_action, re.DOTALL)
+    matches = re.findall(r"<public>(.*?)</public>", raw_action, re.DOTALL)
     
     if matches:
         action = matches[-1]  # Take the last one
