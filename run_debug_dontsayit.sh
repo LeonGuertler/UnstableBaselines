@@ -21,7 +21,6 @@ python3 unstable.py \
     --format_reward_think 1.5 \
     --format_reward_valid_move 1.0 \
     --format_penalty_invalid_move -1.0 \
-    --observation_format_template "qwen3" \
     --opponent_type "fixed" \
     --fixed_opponents "google/gemini-2.5-flash-preview-05-20" \
     --env_max_turns 6 \
