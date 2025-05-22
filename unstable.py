@@ -1,6 +1,7 @@
 import os, time, random, argparse, threading, traceback
 import numpy as np
 from typing import List, Dict
+from dotenv import load_dotenv
 
 import ray, torch
 from ray.train.torch import TorchTrainer
@@ -23,7 +24,7 @@ from utils.asserts import assert_args
 from utils.local_files import initialize_local_folder_structure
 from utils.templates import OBSERVATION_FORMATTING, ACTION_EXTRACTION #, truncate_after_boxed
 
-
+load_dotenv()
 
 @ray.remote(num_gpus=1)
 class RayActor(VLLMActor):

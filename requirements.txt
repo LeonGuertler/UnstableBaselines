@@ -6,3 +6,4 @@ ray[air]
 torch
 transformers
 peft
+python-dotenv
