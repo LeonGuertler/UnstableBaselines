@@ -79,31 +79,31 @@ class WandBTracker:
         self.wandb_name = args.wandb_name 
         wandb.init(project=args.wandb_project_name, name=self.wandb_name, config=args)
         self.metrics = {"collection": {"all": {}}, "evaluation": {"all": {}}} # Metric containers
-        self.eval_ep_count = {"all":0}; self.num_trajectories = {"all":0}; self.checkpoint_player_turns = {"all":0}; self.exploration_counters = {} # Core counters
-        self.std_metrics = ["Player Rewards", "Game Length", "Response Length (avg char)", "Observation Length (avg char)"]
+        self.eval_ep_count = {"all":0}; self.num_trajectories = {"all":0}; self.checkpoint_player_turns = {"all": {"Global": 0}}; self.exploration_counters = {} # Core counters
+        self.mean_metrics = ["Player Rewards", "Game Length", "Response Length (avg char)", "Observation Length (avg char)"]
 
-    def update_metric(self, name, value, prefix, env_id):
-        if env_id not in self.metrics[prefix]:
-            self.metrics[prefix][env_id] = {}
-        if name not in self.metrics[prefix][env_id]:
-            self.metrics[prefix][env_id][name] = deque(maxlen=self.ma_range)
-        self.metrics[prefix][env_id][name].append(value)
+    def update_metric(self, name, value, prefix, env_id, mean=False):
+        if mean and name not in self.mean_metrics: self.mean_metrics.append(name)
+        if env_id not in self.metrics[prefix]: self.metrics[prefix][env_id] = {}
+        if mean and name not in self.metrics[prefix][env_id]: self.metrics[prefix][env_id][name] = deque(maxlen=self.ma_range)
+        if mean: self.metrics[prefix][env_id][name].append(value) 
+        else: self.metrics[prefix][env_id][name] = value
 
-        if name not in self.metrics[prefix]["all"]:
-            self.metrics[prefix]["all"][name] = deque(maxlen=self.ma_range)
-        self.metrics[prefix]["all"][name].append(value)
+        if mean and name not in self.metrics[prefix]["all"]: self.metrics[prefix]["all"][name] = deque(maxlen=self.ma_range)
+        if mean: self.metrics[prefix]["all"][name].append(value)
+        else: self.metrics[prefix]["all"][name] = value
 
     def log_metrics(self, prefix):
         for env_id in self.metrics[prefix]:
-            ma_tag  = f"{prefix} '{env_id}' (MA - range={self.ma_range})"
+            tag  = f"{prefix} '{env_id}')"
             wandb_dict = {
-                f"{ma_tag}/Num Trajectories": self.num_trajectories[env_id] if prefix=="collection" else self.eval_ep_count[env_id],
-                f"{ma_tag}/Checkpoint Player Turns": self.checkpoint_player_turns[env_id] if env_id in self.checkpoint_player_turns else 0
+                f"{tag}/Num Trajectories": self.num_trajectories[env_id] if prefix=="collection" else self.eval_ep_count[env_id],
+                **{f"{tag}/Checkpoint Player Turns ({i})": self.checkpoint_player_turns[env_id][i] for i in self.checkpoint_player_turns[env_id] if env_id in self.checkpoint_player_turns}
             }
             for name in self.metrics[prefix][env_id]:
                 if self.metrics[prefix][env_id][name]:
-                    wandb_dict[f"{ma_tag}/{name}"] = np.mean(self.metrics[prefix][env_id][name])
-                    if name in self.std_metrics: wandb_dict[f"{ma_tag}/{name} (std)"] = np.std(self.metrics[prefix][env_id][name])
+                    wandb_dict[f"{tag}/{name}"] = np.mean(self.metrics[prefix][env_id][name]) if name in self.mean_metrics else self.metrics[prefix][env_id][name]
+                    if name in self.mean_metrics: wandb_dict[f"{tag}/{name} (std)"] = np.std(self.metrics[prefix][env_id][name])
             wandb.log(wandb_dict)
 
     def add_eval_episode(self, episode_info: list, final_reward: dict, current_ckpt_pid: int, env_id: str):
@@ -140,8 +140,8 @@ class WandBTracker:
         raw_current = trajectory.final_rewards[current_checkpoint_pid]
         raw_prev = trajectory.final_rewards[1-current_checkpoint_pid]
         trajectory_exploration_counters = {"states": {}, "actions": {}}
-        if env_id not in self.num_trajectories: self.num_trajectories[env_id] = 0; self.checkpoint_player_turns[env_id] = 0
-        if env_id in self.args.exploration_env_id and env_id not in self.exploration_counters: self.exploration_counters[env_id] = {"all": {"states": {}, "actions": {}, "trajectories": {}}, "last_100": {"actions": deque(maxlen=100)}}
+        if env_id not in self.num_trajectories: self.num_trajectories[env_id] = 0; self.checkpoint_player_turns[env_id] = {'Global': 0}
+        if env_id in self.args.exploration_env_id and env_id not in self.exploration_counters: self.exploration_counters[env_id] = {"Global": {"states": {}, "actions": {}, "trajectories": {}}, "last_100": {"actions": deque(maxlen=100)}}
 
         self.update_metric("Win Rate",  int(raw_current > raw_prev), "collection", env_id)
         self.update_metric("Loss Rate", int(raw_current < raw_prev), "collection", env_id)
@@ -153,6 +153,7 @@ class WandBTracker:
 
         for i in range(n_turns):
             if current_checkpoint_pid==trajectory.pid[i] or self.args.use_all_data:
+                self.checkpoint_player_turns[env_id][f'Turn {i}'] = self.checkpoint_player_turns[env_id].get(f'Turn {i}', 0) + 1
                 self.update_metric("Format Success Rate", int(trajectory.format_feedbacks[i]["has_think"]), "collection", env_id)
                 self.update_metric("Format Invalid Move Rate", int(trajectory.format_feedbacks[i]["invalid_move"]), "collection", env_id)
                 self.update_metric("Response Length (avg char)", len(trajectory.actions[i]), "collection", env_id)
@@ -162,37 +163,45 @@ class WandBTracker:
                     # Store states
                     state = hashlib.md5(trajectory.board_states[i].encode()).hexdigest()
                     trajectory_exploration_counters["states"][state] = trajectory_exploration_counters["states"].get(state, 0) + 1
-                    self.exploration_counters[env_id]["all"]["states"][state] = self.exploration_counters[env_id]["all"]["states"].get(state, 0) + 1
+                    self.exploration_counters[env_id]["Global"]["states"][state] = self.exploration_counters[env_id]["Global"]["states"].get(state, 0) + 1
 
                     # Store actions
                     action = '[]' if "reason" in trajectory.infos[i] and "Invalid Move" in trajectory.infos[i]['reason'] else re.compile(r"\[\s*(\d+)\s*\]").search(trajectory.extracted_actions[i]).group(1)
                     trajectory_exploration_counters["actions"][action] = trajectory_exploration_counters["actions"].get(action, 0) + 1
-                    self.exploration_counters[env_id]["all"]["actions"][action] = self.exploration_counters[env_id]["all"]["actions"].get(action, 0) + 1
+                    self.exploration_counters[env_id]["Global"]["actions"][action] = self.exploration_counters[env_id]["Global"]["actions"].get(action, 0) + 1
+                    if f'Turn {i}' not in self.exploration_counters[env_id]: self.exploration_counters[env_id][f'Turn {i}'] = {"actions": {}, 'last_100': {"actions": deque(maxlen=100)}}
+                    self.exploration_counters[env_id][f'Turn {i}']["actions"][action] = self.exploration_counters[env_id][f'Turn {i}']["actions"].get(action, 0) + 1
+                    self.exploration_counters[env_id][f'Turn {i}']["last_100"]["actions"].append(action)
                     self.exploration_counters[env_id]["last_100"]["actions"].append(action)
 
                     # Update exploration-specific metrics
                     self.update_metric("State Entropy (Trajectory)", self._entropy(trajectory_exploration_counters["states"]), "collection", env_id)
                     self.update_metric("Unique States Visited (Trajectory)", len(trajectory_exploration_counters["states"]), "collection", env_id)
-                    self.update_metric("State Entropy (Global)", self._entropy(self.exploration_counters[env_id]["all"]["states"]), "collection", env_id)
-                    self.update_metric("Unique States Visited (Global)", len(self.exploration_counters[env_id]["all"]["states"]), "collection", env_id)
+                    self.update_metric("State Entropy (Global)", self._entropy(self.exploration_counters[env_id]["Global"]["states"]), "collection", env_id)
+                    self.update_metric("Unique States Visited (Global)", len(self.exploration_counters[env_id]["Global"]["states"]), "collection", env_id)
                     self.update_metric("Action Entropy (Trajectory)", self._entropy(trajectory_exploration_counters["actions"]), "collection", env_id)
                     self.update_metric("Unique Actions (Trajectory)", len(trajectory_exploration_counters["actions"]), "collection", env_id)
                     last_100_action_counts = dict(Counter(self.exploration_counters[env_id]["last_100"]["actions"]))
                     self.update_metric("Action Entropy (Last 100)", self._entropy(last_100_action_counts), "collection", env_id)
                     self.update_metric("Unique Actions (Last 100)", len(last_100_action_counts), "collection", env_id)
-                    self.update_metric("Action Entropy (Global)", self._entropy(self.exploration_counters[env_id]["all"]["actions"]), "collection", env_id)
-                    self.update_metric("Unique Actions (Global)", len(self.exploration_counters[env_id]["all"]["actions"]), "collection", env_id)
+                    self.update_metric("Action Entropy (Global)", self._entropy(self.exploration_counters[env_id]["Global"]["actions"]), "collection", env_id)
+                    self.update_metric("Unique Actions (Global)", len(self.exploration_counters[env_id]["Global"]["actions"]), "collection", env_id)
+                    self.update_metric(f"Action Entropy (Global) (Turn {i})", self._entropy(self.exploration_counters[env_id][f'Turn {i}']["actions"]), "collection", env_id)
+                    self.update_metric(f"Unique Actions (Global) (Turn {i})", len(self.exploration_counters[env_id][f'Turn {i}']["actions"]), "collection", env_id)
+                    last_100_action_counts = dict(Counter(self.exploration_counters[env_id][f'Turn {i}']["last_100"]["actions"]))
+                    self.update_metric(f"Action Entropy (Last 100) (Turn {i})", self._entropy(last_100_action_counts), "collection", env_id)
+                    self.update_metric(f"Unique Actions (Last 100) (Turn {i})", len(last_100_action_counts), "collection", env_id)
 
         if env_id in self.args.exploration_env_id:
             trajectory_signature = hashlib.md5(str(trajectory.board_states).encode()).hexdigest()
-            self.exploration_counters[env_id]["all"]["trajectories"][trajectory_signature] = self.exploration_counters[env_id]["all"]["trajectories"].get(trajectory_signature, 0) + 1
-            self.update_metric("Unique Trajectories", len(self.exploration_counters[env_id]["all"]["trajectories"]), "collection", env_id)
+            self.exploration_counters[env_id]["Global"]["trajectories"][trajectory_signature] = self.exploration_counters[env_id]["Global"]["trajectories"].get(trajectory_signature, 0) + 1
+            self.update_metric("Unique Trajectories", len(self.exploration_counters[env_id]["Global"]["trajectories"]), "collection", env_id)
 
-        print('POOOL', last_100_action_counts)
+
         self.num_trajectories[env_id] += 1
         self.num_trajectories["all"] += 1
-        self.checkpoint_player_turns[env_id] += checkpoint_player_turn_count
-        self.checkpoint_player_turns["all"] += checkpoint_player_turn_count  
+        self.checkpoint_player_turns[env_id]["Global"] += checkpoint_player_turn_count
+        self.checkpoint_player_turns["all"]["Global"] += checkpoint_player_turn_count  
         self.log_metrics("collection")
 
     @staticmethod
