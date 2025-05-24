@@ -78,7 +78,7 @@ class WandBTracker:
 
         self.wandb_name = args.wandb_name 
         wandb.init(project=args.wandb_project_name, name=self.wandb_name, config=args)
-        self.metrics = {"collection": {"all": {}}, "evaluation": {"all": {}}} # Metric containers
+        self.metrics = {"collection": {"all": {}}, "evaluation": {"all": {}}, "exploration": {"all": {}}} # Metric containers
         self.eval_ep_count = {"all":0}; self.num_trajectories = {"all":0}; self.checkpoint_player_turns = {"all": {"Global": 0}}; self.exploration_counters = {} # Core counters
         self.mean_metrics = ["Player Rewards", "Game Length", "Response Length (avg char)", "Observation Length (avg char)"]
 
@@ -98,12 +98,12 @@ class WandBTracker:
             tag  = f"{prefix} '{env_id}')"
             wandb_dict = {
                 f"{tag}/Num Trajectories": self.num_trajectories[env_id] if prefix=="collection" else self.eval_ep_count[env_id],
-                **{f"{tag}/Checkpoint Player Turns ({i})": self.checkpoint_player_turns[env_id][i] for i in self.checkpoint_player_turns[env_id] if env_id in self.checkpoint_player_turns}
+                **{f"{tag}/Checkpoint Player Turns ({i})": self.checkpoint_player_turns[env_id][i] for i in self.checkpoint_player_turns[env_id] if env_id in self.checkpoint_player_turns and prefix=="exploration"}
             }
             for name in self.metrics[prefix][env_id]:
-                if self.metrics[prefix][env_id][name]:
-                    wandb_dict[f"{tag}/{name}"] = np.mean(self.metrics[prefix][env_id][name]) if name in self.mean_metrics else self.metrics[prefix][env_id][name]
-                    if name in self.mean_metrics: wandb_dict[f"{tag}/{name} (std)"] = np.std(self.metrics[prefix][env_id][name])
+                # if self.metrics[prefix][env_id][name]: # Does not log win_rate == 0
+                wandb_dict[f"{tag}/{name}"] = np.mean(self.metrics[prefix][env_id][name]) if name in self.mean_metrics else self.metrics[prefix][env_id][name]
+                if name in self.mean_metrics: wandb_dict[f"{tag}/{name} (std)"] = np.std(self.metrics[prefix][env_id][name])
             wandb.log(wandb_dict)
 
     def add_eval_episode(self, episode_info: list, final_reward: dict, current_ckpt_pid: int, env_id: str):
@@ -119,8 +119,9 @@ class WandBTracker:
             outcome_metric = "Loss Rate"
 
         # Update outcome metrics
-        for metric in ["Win Rate", "Loss Rate", "Draw Rate"]:
-            self.update_metric(metric, int(metric == outcome_metric), "evaluation", env_id)
+        self.update_metric("Win Rate", int("Win Rate" == outcome_metric), "evaluation", env_id)
+        self.update_metric("Loss Rate", int("Loss Rate" == outcome_metric), "evaluation", env_id)
+        self.update_metric("Draw Rate", int("Draw Rate" == outcome_metric), "evaluation", env_id)
         self.update_metric("Game Length", len(episode_info), "evaluation", env_id) # Turn count
 
         # Save CSV
@@ -158,7 +159,6 @@ class WandBTracker:
                 self.update_metric("Format Invalid Move Rate", int(trajectory.format_feedbacks[i]["invalid_move"]), "collection", env_id)
                 self.update_metric("Response Length (avg char)", len(trajectory.actions[i]), "collection", env_id)
                 self.update_metric("Observation Length (avg char)", len(trajectory.obs[i]), "collection", env_id)
-
                 if env_id in self.args.exploration_env_id:
                     # Store states
                     state = hashlib.md5(trajectory.board_states[i].encode()).hexdigest()
@@ -175,27 +175,28 @@ class WandBTracker:
                     self.exploration_counters[env_id]["last_100"]["actions"].append(action)
 
                     # Update exploration-specific metrics
-                    self.update_metric("State Entropy (Trajectory)", self._entropy(trajectory_exploration_counters["states"]), "collection", env_id)
-                    self.update_metric("Unique States Visited (Trajectory)", len(trajectory_exploration_counters["states"]), "collection", env_id)
-                    self.update_metric("State Entropy (Global)", self._entropy(self.exploration_counters[env_id]["Global"]["states"]), "collection", env_id)
-                    self.update_metric("Unique States Visited (Global)", len(self.exploration_counters[env_id]["Global"]["states"]), "collection", env_id)
-                    self.update_metric("Action Entropy (Trajectory)", self._entropy(trajectory_exploration_counters["actions"]), "collection", env_id)
-                    self.update_metric("Unique Actions (Trajectory)", len(trajectory_exploration_counters["actions"]), "collection", env_id)
+                    self.update_metric("State Entropy (Trajectory)", self._entropy(trajectory_exploration_counters["states"]), "exploration", env_id)
+                    self.update_metric("Unique States Visited (Trajectory)", len(trajectory_exploration_counters["states"]), "exploration", env_id)
+                    self.update_metric("State Entropy (Global)", self._entropy(self.exploration_counters[env_id]["Global"]["states"]), "exploration", env_id)
+                    self.update_metric("Unique States Visited (Global)", len(self.exploration_counters[env_id]["Global"]["states"]), "exploration", env_id)
+                    self.update_metric("Action Entropy (Trajectory)", self._entropy(trajectory_exploration_counters["actions"]), "exploration", env_id)
+                    self.update_metric("Unique Actions (Trajectory)", len(trajectory_exploration_counters["actions"]), "exploration", env_id)
                     last_100_action_counts = dict(Counter(self.exploration_counters[env_id]["last_100"]["actions"]))
-                    self.update_metric("Action Entropy (Last 100)", self._entropy(last_100_action_counts), "collection", env_id)
-                    self.update_metric("Unique Actions (Last 100)", len(last_100_action_counts), "collection", env_id)
-                    self.update_metric("Action Entropy (Global)", self._entropy(self.exploration_counters[env_id]["Global"]["actions"]), "collection", env_id)
-                    self.update_metric("Unique Actions (Global)", len(self.exploration_counters[env_id]["Global"]["actions"]), "collection", env_id)
-                    self.update_metric(f"Action Entropy (Global) (Turn {i})", self._entropy(self.exploration_counters[env_id][f'Turn {i}']["actions"]), "collection", env_id)
-                    self.update_metric(f"Unique Actions (Global) (Turn {i})", len(self.exploration_counters[env_id][f'Turn {i}']["actions"]), "collection", env_id)
+                    self.update_metric("Action Entropy (Last 100)", self._entropy(last_100_action_counts), "exploration", env_id)
+                    self.update_metric("Unique Actions (Last 100)", len(last_100_action_counts), "exploration", env_id)
+                    self.update_metric("Action Entropy (Global)", self._entropy(self.exploration_counters[env_id]["Global"]["actions"]), "exploration", env_id)
+                    self.update_metric("Unique Actions (Global)", len(self.exploration_counters[env_id]["Global"]["actions"]), "exploration", env_id)
+                    self.update_metric(f"Action Entropy (Global) (Turn {i})", self._entropy(self.exploration_counters[env_id][f'Turn {i}']["actions"]), "exploration", env_id)
+                    self.update_metric(f"Unique Actions (Global) (Turn {i})", len(self.exploration_counters[env_id][f'Turn {i}']["actions"]), "exploration", env_id)
                     last_100_action_counts = dict(Counter(self.exploration_counters[env_id][f'Turn {i}']["last_100"]["actions"]))
-                    self.update_metric(f"Action Entropy (Last 100) (Turn {i})", self._entropy(last_100_action_counts), "collection", env_id)
-                    self.update_metric(f"Unique Actions (Last 100) (Turn {i})", len(last_100_action_counts), "collection", env_id)
+                    self.update_metric(f"Action Entropy (Last 100) (Turn {i})", self._entropy(last_100_action_counts), "exploration", env_id)
+                    self.update_metric(f"Unique Actions (Last 100) (Turn {i})", len(last_100_action_counts), "exploration", env_id)
 
         if env_id in self.args.exploration_env_id:
             trajectory_signature = hashlib.md5(str(trajectory.board_states).encode()).hexdigest()
             self.exploration_counters[env_id]["Global"]["trajectories"][trajectory_signature] = self.exploration_counters[env_id]["Global"]["trajectories"].get(trajectory_signature, 0) + 1
-            self.update_metric("Unique Trajectories", len(self.exploration_counters[env_id]["Global"]["trajectories"]), "collection", env_id)
+            self.update_metric("Unique Trajectories", len(self.exploration_counters[env_id]["Global"]["trajectories"]), "exploration", env_id)
+            self.log_metrics('exploration')
 
 
         self.num_trajectories[env_id] += 1
