@@ -241,7 +241,7 @@ def main():
 
     # build the reward transformations to be used
     final_reward_transformation = retra.ComposeFinalRewardTransforms([
-        retra.WinDrawLossFormatter(), # turn the rewards into (1,-1), (-1,1), (0,0) # TODO can be removed with TextArena v0.6.9
+        # retra.WinDrawLossFormatter(), # turn the rewards into (1,-1), (-1,1), (0,0) # TODO can be removed with TextArena v0.6.9
         retra.RoleAdvantageByEnvFormatter(), # normalize rewards for role advantage # TODO worth moving to step?
     ])
     step_reward_transformation = retra.ComposeStepRewardTransforms([
@@ -249,7 +249,7 @@ def main():
         retra.PenaltyForInvalidMove(reward=args.format_reward_valid_move, penalty=args.format_penalty_invalid_move), 
     ])
     sampling_reward_transformation = retra.ComposeSamplingRewardTransforms([
-        retra.NormalizeRewardsByEnv(z_score=True) # normalize the sampled batch
+        retra.NormalizeRewardsByEnv() # normalize the sampled batch
     ])
 
     ray.init(num_gpus=args.num_actors+args.num_learners)

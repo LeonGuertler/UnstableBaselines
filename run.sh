@@ -1,7 +1,7 @@
 python3 unstable.py \
     --model_name "Qwen/Qwen3-4B-base" \
-    --train_env_id "SimpleTak-v0-train:2:qwen3-game,Nim-v0-train:2:qwen3-game,KuhnPoker-v0-train:2:qwen3-game,UltimateTicTacToe-v0-train:2:qwen3-game,SimpleNegotiation-v0-train:2:qwen3-game,LiarsDice-v0-train:2:qwen3-game,SpellingBee-v0-train:2:qwen3-game" \
-    --eval_env_id "SimpleTak-v0-train:2:qwen3-game,Nim-v0-train:2:qwen3-game,KuhnPoker-v0-train:2:qwen3-game,UltimateTicTacToe-v0-train:2:qwen3-game,SimpleNegotiation-v0-train:2:qwen3-game,LiarsDice-v0-train:2:qwen3-game,SpellingBee-v0-train:2:qwen3-game,Dataset-AIME24-v0:1:qwen3-reasoning"\
+    --train_env_id "SimpleTak-v0-train:2:qwen3-game" \
+    --eval_env_id "SimpleTak-v0-train:2:qwen3-game,Dataset-AIME24-v0:1:qwen3-reasoning "\
     --wandb \
     --num_actors 2 \
     --num_learners 1 \
@@ -17,10 +17,10 @@ python3 unstable.py \
     --lora_alpha 32 \
     --lora_dropout 0 \
     --self_play_opponent_lag_lower 1 \
-    --self_play_opponent_lag_upper 7 \
+    --self_play_opponent_lag_upper 5 \
     --format_reward_think 1.5 \
     --format_reward_valid_move 1.0 \
     --format_penalty_invalid_move -1.0\
-    --eval_games_per_update_step 64\
+    --eval_games_per_update_step 128\
     --gradient_clip 0.5\
-    --lora_target_modules q_proj,k_proj,v_proj,o_proj,gate_proj,up_proj,down_proj
+    --opponent_type "fixed"
