@@ -15,6 +15,7 @@ class WandBTracker:
         self, 
         wandb_run_name: str,
         ma_range: int = 100,
+        eval_games_per_update_step: int = 10,
         output_dir: Optional[str] = None,
         wandb_project_name: str= "UnstableBaselines",
         exploration_env_id: Optional[List[str]] = [],
@@ -23,6 +24,7 @@ class WandBTracker:
         self.wandb_name = wandb_run_name
         self.exploration_env_id = exploration_env_id
         self._build_output_dir(output_dir=output_dir) 
+        self.eval_games_per_update_step = eval_games_per_update_step
 
         wandb.init(project=wandb_project_name, name=self.wandb_name)
         self.metrics = {"collection": {"all": {}}, "evaluation": {"all": {}}, "exploration": {"all": {}}} # Metric containers
@@ -83,7 +85,7 @@ class WandBTracker:
         if len(final_reward) == 1: # single player env, just report the final reward
             self.update_iteration_eval_metric("Reward", final_reward[0], env_id, ckpt_iteration)
             self.update_iteration_eval_metric("Game Length", len(episode_info), env_id, ckpt_iteration)
-            if len(self.eval_iter_metrics[ckpt_iteration][env_id]["Reward"]) >= self.args.eval_games_per_update_step: # log it
+            if len(self.eval_iter_metrics[ckpt_iteration][env_id]["Reward"]) >= self.eval_games_per_update_step: # log it
                 wandb_dict = {f"Eval '{env_id}'/{name}": np.mean(self.eval_iter_metrics[ckpt_iteration][env_id][name]) for name in self.eval_iter_metrics[ckpt_iteration][env_id]}
                 wandb_dict[f"Eval '{env_id}'/ckpt-iteration"] = ckpt_iteration
                 wandb.log(wandb_dict)
@@ -165,7 +167,7 @@ class WandBTracker:
 
                     # Store actions
                     if f'Turn {i}' not in self.counters[env_id]: self.counters[env_id][f'Turn {i}'] = {"actions": {}, 'last_100': {"actions": deque(maxlen=100)}}
-                    match = re.compile(r"\[\s*(\d+)\s*\]").search(trajectory.extracted_actions[i])
+                    match = re.compile(r"\[\s*(up|down|left|right|w|a|s|d)\s*\]").search(trajectory.extracted_actions[i])
                     if not match or ("reason" in trajectory.infos[i] and "Invalid Move" in trajectory.infos[i]['reason']): action = '[]' 
                     else: action = match.group(1)
                     trajectory_counters["actions"][action] = trajectory_counters["actions"].get(action, 0) + 1
@@ -214,6 +216,18 @@ class WandBTracker:
         # counts = {("ckpt-200","ckpt-195"): 17, ("ckpt-200","gemini"): 9, …}
         for (u1, u2), n in counts.items():
             wandb.log({f"matchups/{u1}_vs_{u2}": n, "learner/step": step})
+
+    def log_action_n_grams(self, action_n_grams: dict, env_id: str):
+        def _normalize_ngrams(ngrams):
+            total = sum(ngrams.values())
+            return {k: v / total for k, v in ngrams.items()}
+        def _compute_entropy(prob_dist):
+            return -sum(p * math.log2(p) for p in prob_dist if p > 0)
+        wandb_dict = {
+            **{f"exploration ({env_id})/{n}-gram entropy": _compute_entropy(_normalize_ngrams(action_n_grams[n]).values()) for n in action_n_grams},
+            **{f"exploration ({env_id})/unique {n}-grams": len(action_n_grams[n]) for n in action_n_grams}
+            }
+        wandb.log(wandb_dict)
 
     @staticmethod
     def _entropy(counts: Dict[str, int]) -> float:

@@ -1,8 +1,8 @@
 from dataclasses import dataclass, field
-from collections import defaultdict
-from typing import List, Dict
+from collections import defaultdict, Counter
+from typing import List, Dict, Tuple
 import trueskill, math, ray, random, time
-
+import re
 # local imports
 # from unstable.tracker import WandBTracker
 
@@ -36,6 +36,7 @@ class Opponent:
     kind: str # {"checkpoint","fixed"}
     path_or_name: str # LoRA dir or OpenRouter model id
     rating: trueskill.Rating # trueskill.Rating(mu, sigma)
+    actions: Dict[str, Tuple[str, int]] = field(default_factory=dict) # env_id -> (action_string, probability)
     active: bool = True
 
 
@@ -113,8 +114,6 @@ class ModelPool:
         
         elif self.sample_mode == "exploration": # sample an opponent based on the expected number of unique board states when playing against that opponent
             return self._sample_exploration_opponent(uid_me=uid_me)
-        
-        
         else:
             raise ValueError(self.sample_mode)
 
@@ -131,7 +130,7 @@ class ModelPool:
         fixed = [u for u,m in self._models.items() if m.kind=="fixed"]
         checkpoints = [u for u,m in self._models.items() if (m.kind=="checkpoint" and m.active==True)]
         return random.choice(fixed+checkpoints)
-
+    
     def _sample_match_quality_opponent(self, uid_me: str) -> str:
         """ Pick an opponent with probability ∝ TrueSkill match-quality """
         cand, weights = [], []
@@ -185,10 +184,47 @@ class ModelPool:
         return random.choices(cand, weights=weights, k=1)[0]
 
     def _sample_exploration_opponent(self, uid_me: str):
-        # TODO 
-        return 
+        def _jensen_shannon_divergence(p, q, epsilon=1e-10):
+            def _kl_divergence(p, q, epsilon=1e-10):
+                keys = set(p) | set(q)
+                return sum(
+                    p.get(k, 0.0) * math.log2(p.get(k, epsilon) / q.get(k, epsilon))
+                    for k in keys if p.get(k, 0.0) > 0
+                )
+            keys = set(p) | set(q)
+            m = {
+                k: 0.5 * (p.get(k, 0.0) + q.get(k, 0.0))
+                for k in keys
+            }
+            kl_p_m = _kl_divergence(p, m, epsilon); kl_q_m = _kl_divergence(q, m, epsilon)
+            return 0.5 * (kl_p_m + kl_q_m)
+        cand, quality, diversity = [], [], []
+        for uid, opp in self._models.items():
+            if uid == uid_me or not opp.active:
+                continue
+            cand.append(uid)
 
+            # Mean JS divergence between the action distributions of the two models
+            js_divs = []; common_envs = set(self._models[uid_me].actions.keys()) & set(opp.actions.keys())
+            for env_id in common_envs:
+                p = self._models[uid_me].actions[env_id][3]; q = opp.actions[env_id][3]
+                if p and q:
+                    js = _jensen_shannon_divergence(p, q)
+                    js_divs.append(js)
+            if js_divs: diversity.append(sum(js_divs) / len(js_divs))
+            else: diversity.append(0.0)
 
+            # TrueSkill match quality
+            quality.append(math.exp((opp.rating.mu-self._models[uid_me].rating.mu)/25))
+
+        quality_sum = sum(quality); diversity_sum = sum(diversity)
+        for i in range(len(quality)):
+            quality[i] = quality[i]/quality_sum if quality_sum > 0 else 0.0
+            diversity[i] = diversity[i]/diversity_sum if diversity_sum > 0 else 0.0
+        weights = [0.7*q + 0.3*d for q, d in zip(quality, diversity)]
+        if not cand:
+            return None
+        return random.choices(cand, weights=weights, k=1)[0]
 
     def update_ratings(self, uid_me, uid_opp, final_reward):
         if uid_me not in self._models or uid_opp not in self._models:
@@ -212,6 +248,25 @@ class ModelPool:
 
         # register the game for tracking
         self._register_game(uid_me=uid_me, uid_opp=uid_opp)
+
+    def add_trajectory(self, uid, pid, env_id: str, traj: Trajectory, alpha=0.01):
+        def _extract_ngrams(input_list, n):
+            return [tuple(input_list[i:i+n]) for i in range(len(input_list) - n + 1)]
+        if env_id not in self._models[uid].actions: self._models[uid].actions[env_id] = {1: {}, 2: {}, 3: {}, 4: {}, 5: {}}
+
+        # TODO: How to check if a move was valid when TextArena Envs allow multiple invalid moves before done=True? Can TextArena envs not keep the regex as a "action space" attribute? Then I can use that to check if the move was valid.
+        actions = [match.group(1) for match in [re.compile(r"\[\s*(\d+)\s*\]").search(a) for a in traj.extracted_actions] if match is not None]
+
+        for n in [1, 2, 3, 4, 5]:
+            n_grams = Counter(_extract_ngrams([a for p, a in zip(traj.pid, actions) if p == pid], n))
+            for n_gram in set(self._models[uid].actions[env_id][n]) | set(n_grams):
+                past = self._models[uid].actions[env_id][n].get(n_gram, 0.0)
+                new = n_grams.get(n_gram, 0.0)
+                self._models[uid].actions[env_id][n][n_gram] = (1 - alpha) * past + alpha * new
+                if self._models[uid].actions[env_id][n][n_gram] < 0.001: del self._models[uid].actions[env_id][n][n_gram]
+        
+        if self._tracker:
+            self._tracker.log_action_n_grams.remote(action_n_grams=self._models[uid].actions[env_id], env_id=env_id)
 
     def _exp_win(self, A, B): return self.TS.cdf((A.mu - B.mu) / ((2*self.TS.beta**2 + A.sigma**2 + B.sigma**2) ** 0.5))
     def _activate(self, uid): self._models[uid].active = True
@@ -273,6 +328,7 @@ class ModelPool:
         self._match_counts[pair] += 1
 
 
+    # TODO: Track action n-gram distances between model_pool and current_model over time. 
     def snapshot(self, iteration: int):
         self._step_counter = iteration
         for uid, opp in self._models.items():

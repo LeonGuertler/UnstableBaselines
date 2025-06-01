@@ -17,6 +17,13 @@ def qwen3_template(observation: str) -> str:
         "<|im_start|>assistant\n"
     )
 
+def qwen3_template_single_player(observation: str) -> str:
+    return (
+        f"<|im_start|>user\nYou are playing a single player game. Make valid actions to win.\nObservation: {observation}"
+        "\nPlease reason step by step, and put your final answer within \\boxed{}.<|im_end|>\n"
+        "<|im_start|>assistant\n"
+    )
+
 def qwen3_template_reasoning(observation: str) -> str:
     return (
         "<|im_start|>user\nPlease reason step by step, and put your final answer within \\boxed{}.\n"
@@ -47,10 +54,12 @@ OBSERVATION_FORMATTING = {
     "qwen3": qwen3_template,
     "qwen3-game": qwen3_template,
     "qwen3-zs": qwen3_template,
+    "qwen3-single-player": qwen3_template_single_player,
     "qwen3-reasoning": qwen3_template_reasoning,
 }
 
 ACTION_EXTRACTION = {
     "default": extract_action_and_format_feedback,
     "qwen3-zs": extract_action_and_format_feedback,
+    "qwen3-single-player": extract_action_and_format_feedback,
 }

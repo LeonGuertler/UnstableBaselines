@@ -220,6 +220,8 @@ class Collector:
                 traj, pid, env_id = ray.get(fut)
                 # send to buffer / trueskill / tracker
                 self.buffer.add_trajectory.remote(traj, pid, env_id)
+                # self.model_pool.add_trajectory.remote(uid=mdl_uid, pid=pid, 
+                #                                       env_id=env_id, traj=traj)
                 if opp_uid is not None:
                     self.model_pool.update_ratings.remote(
                         uid_me=mdl_uid, uid_opp=opp_uid,
