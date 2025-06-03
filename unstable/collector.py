@@ -76,13 +76,24 @@ class Collector:
         actor = next(self.actor_iter)
         current_model_uid = ray.get(self.model_pool.latest_ckpt.remote())
         lora_path = ray.get(self.model_pool.ckpt_path.remote(current_model_uid))
-        opponent_uid = ray.get(self.model_pool.sample.remote(uid_me=current_model_uid))
-        opponent_path_or_name = ray.get(self.model_pool.ckpt_path.remote(opponent_uid))
+        
+        if num_players == 1:
+            # Single-player: no opponent needed
+            opponent_uid = None
+            opponent_path_or_name = None
+        else:
+            # Multi-player: get opponent from pool
+            opponent_uid = ray.get(self.model_pool.sample.remote(uid_me=current_model_uid))
+            opponent_path_or_name = ray.get(self.model_pool.ckpt_path.remote(opponent_uid))
+        
         return dict(
-            env_id=env_id, num_players=num_players, player_id=player_id, actor=actor, lora_path=lora_path, opponent_uid=opponent_uid, 
+            env_id=env_id, num_players=num_players, player_id=player_id, 
+            actor=actor, lora_path=lora_path, opponent_uid=opponent_uid, 
             model_uid=current_model_uid,
-            opponent_path_or_name=opponent_path_or_name, prompt_template=prompt_template, seed=seed
+            opponent_path_or_name=opponent_path_or_name, 
+            prompt_template=prompt_template, seed=seed
         )
+
     def _spawn_eval_sweep(self, ckpt_uid: str):
         """Populate _pending_eval_tasks; nothing is launched here."""
         lora_path = ray.get(self.model_pool.ckpt_path.remote(ckpt_uid))
@@ -93,10 +104,11 @@ class Collector:
                 player_id = rnd.randrange(num_players)
                 actor = next(self.actor_iter)
                 eval_args = dict(
-                    env_id=env_id, num_players=num_players, player_id=player_id, actor=actor, lora_path=lora_path,
-                    opponent_name=self.evaluation_opponent, prompt_template=prompt_template, seed=s,
+                    env_id=env_id, num_players=num_players, player_id=player_id, 
+                    actor=actor, lora_path=lora_path,
+                    opponent_name=self.evaluation_opponent if num_players > 1 else None,
+                    prompt_template=prompt_template, seed=s,
                 )
-                # keep the metadata so we can forward it to the tracker later
                 self._pending_eval_tasks.append((eval_args, env_id, player_id, ckpt_uid, s))
 
 
@@ -112,9 +124,15 @@ class Collector:
             extract_fn = ACTION_EXTRACTION[prompt_template]
             model = CallableActorWrapper(actor, lora_path, obs_format, extract_fn)
 
-            if opponent_uid is None: opponent = model
-            elif opponent_uid.startswith("ckpt-"): opponent = CallableActorWrapper(actor, opponent_path_or_name, obs_format, extract_fn)
-            else: opponent = ta.agents.OpenRouterAgent(opponent_path_or_name)
+            # Handle opponent setup based on game type
+            if num_players == 1:
+                opponent = None  # No opponent needed for single-player
+            elif opponent_uid is None: 
+                opponent = model  # Self-play
+            elif opponent_uid.startswith("ckpt-"): 
+                opponent = CallableActorWrapper(actor, opponent_path_or_name, obs_format, extract_fn)
+            else: 
+                opponent = ta.agents.OpenRouterAgent(opponent_path_or_name)
 
             env = ta.make(env_id)
             env.reset(num_players=num_players, seed=seed)
@@ -132,21 +150,34 @@ class Collector:
                     traj.board_states.append(env.state.game_state['board'] if 'board' in env.state.game_state else None)
                     traj.format_feedbacks.append(fb)
                 else:
-                    done, info = env.step(opponent(obs))
+                    # This branch should only execute for multi-player games
+                    if opponent is not None:
+                        done, info = env.step(opponent(obs))
+                    else:
+                        # This shouldn't happen in single-player, but just in case
+                        raise ValueError(f"No opponent available for player {pid} in multi-player game")
                 turn += 1
                 if done:
                     break
+            
             traj.final_rewards = env.close()
             traj.num_turns = turn
             if info["end_by_invalid"] and pid==player_id:  
-                traj.format_feedbacks[-1]["invalid_move"] = 1 # adjust final move to invalid as necessary
+                traj.format_feedbacks[-1]["invalid_move"] = 1
             return traj, player_id, env_id
 
         # @ray.remote(num_cpus=0.1)
         @ray.remote(num_cpus=0)
         def run_eval_game(env_id, num_players, player_id, actor, lora_path, opponent_name, prompt_template, seed: int = 489):
-            model = CallableActorWrapper( actor, lora_path, OBSERVATION_FORMATTING[prompt_template], ACTION_EXTRACTION[prompt_template])
-            opponent = ta.agents.OpenRouterAgent(opponent_name)
+            model = CallableActorWrapper(actor, lora_path, OBSERVATION_FORMATTING[prompt_template], ACTION_EXTRACTION[prompt_template])
+            
+            # Handle opponent setup for evaluation
+            if num_players == 1:
+                opponent = None
+                opponent_display_name = None
+            else:
+                opponent = ta.agents.OpenRouterAgent(opponent_name)
+                opponent_display_name = opponent_name
 
             env = ta.make(env_id)
             env.reset(num_players=num_players, seed=seed)
@@ -159,8 +190,11 @@ class Collector:
                     full, act, fb, prompt = model.get_full_response(obs)
                     name = "current_ckpt"
                 else:
-                    full = act = opponent(obs)
-                    name = opponent_name
+                    if opponent is not None:
+                        full = act = opponent(obs)
+                        name = opponent_display_name
+                    else:
+                        raise ValueError(f"No opponent available for player {pid} in multi-player evaluation")
 
                 done, info = env.step(act)
                 turn += 1

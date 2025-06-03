@@ -26,7 +26,7 @@ class WandBTracker:
         self._build_output_dir(output_dir=output_dir) 
         self.eval_games_per_update_step = eval_games_per_update_step
 
-        wandb.init(project=wandb_project_name, name=self.wandb_name)
+        wandb.init(project=wandb_project_name, name=self.wandb_name, entity='stlm')
         self.metrics = {"collection": {"all": {}}, "evaluation": {"all": {}}, "exploration": {"all": {}}} # Metric containers
         self.eval_iter_metrics = {} # use iteration as key, when full, log and clear to save space
         self.eval_ep_count = {"all":0}; self.num_trajectories = {"all":0}; self.player_turns = {"all": {"Global": 0}}; self.counters = {} # Core counters
