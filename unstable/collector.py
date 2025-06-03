@@ -9,7 +9,7 @@ from ray.util.actor_pool import ActorPool
 from unstable.core import Trajectory
 from unstable.tracker import WandBTracker
 from unstable.actors.vllm_actor import VLLMActor
-from unstable.utils.templates import OBSERVATION_FORMATTING, ACTION_EXTRACTION
+from unstable.utils.templates import OBSERVATION_FORMATTING, ACTION_EXTRACTION, get_action_space
 
 
 class CallableActorWrapper:
@@ -220,8 +220,9 @@ class Collector:
                 traj, pid, env_id = ray.get(fut)
                 # send to buffer / trueskill / tracker
                 self.buffer.add_trajectory.remote(traj, pid, env_id)
-                # self.model_pool.add_trajectory.remote(uid=mdl_uid, pid=pid, 
-                #                                       env_id=env_id, traj=traj)
+                if get_action_space(env_id):
+                    self.model_pool.add_trajectory.remote(uid=mdl_uid, uid_opp=opp_uid, pid=pid, 
+                                                        env_id=env_id, traj=traj)
                 if opp_uid is not None:
                     self.model_pool.update_ratings.remote(
                         uid_me=mdl_uid, uid_opp=opp_uid,

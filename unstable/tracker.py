@@ -72,7 +72,7 @@ class WandBTracker:
             tag  = f"{prefix} '({env_id}')"
             wandb_dict = {
                 f"{tag}/Num Trajectories": self.num_trajectories[env_id] if prefix in ["collection", "exploration"] else self.eval_ep_count[env_id],
-                **{f"{tag}/Player Turns ({i})": self.player_turns[env_id][i] for i in self.player_turns[env_id] if env_id in self.player_turns and prefix=="exploration"}
+                # **{f"{tag}/Player Turns ({i})": self.player_turns[env_id][i] for i in self.player_turns[env_id] if env_id in self.player_turns and prefix=="exploration"}
             }
             for name in self.metrics[prefix][env_id]:
                 # if self.metrics[prefix][env_id][name]: # Does not log win_rate == 0
@@ -229,8 +229,19 @@ class WandBTracker:
             }
         wandb.log(wandb_dict)
 
+    def log_pairwise_n_gram_distances(self, dist_matrix: np.ndarray, uids: List[str]):
+        wandb_dict = {}
+        for i in range(dist_matrix.shape[0]):
+            distances = [dist_matrix[i, j] for j in range(dist_matrix.shape[1]) if i != j]
+            if distances:  # Only compute min if we have distances
+                wandb_dict[f'opponent sampling/min dist.{uids[i]}'] = np.min(distances)
+                wandb_dict[f'opponent sampling/max dist.{uids[i]}'] = np.max(distances)
+            else:
+                wandb_dict[f'opponent sampling/min dist.{uids[i]}'] = 0.0  # or np.nan
+                wandb_dict[f'opponent sampling/max dist.{uids[i]}'] = 0.0  # or np.nan
+        wandb.log(wandb_dict)
+
     @staticmethod
     def _entropy(counts: Dict[str, int]) -> float:
         total = sum(counts.values())
         return -sum((c / total) * math.log(c / total) for c in counts.values()) if total > 0.0 else 0.0
-

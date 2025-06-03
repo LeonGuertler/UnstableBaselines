@@ -1,5 +1,5 @@
 import re
-from typing import Tuple, Dict
+from typing import Tuple, Dict, Optional
 
 
 
@@ -30,6 +30,17 @@ def qwen3_template_reasoning(observation: str) -> str:
         f"Question: {observation}<|im_end|>\n"
         "<|im_start|>assistant\n"
     )
+
+# I think something like this should be part of TextArena instead
+def get_action_space(env_id: str) -> Optional[str]:
+    action_spaces = {
+        'SimpleTak-v0-train': r"\[\s*(\d+)\s*\]",
+        'SimpleNegotiation-v0-train': r"(?i)(?P<accept>\[Accept\])|(?P<deny>\[Deny\])|(?P<offer>\[Offer:\s*(?:I\s+(?:give|offer)\s+)?([^\[\]]+?)\s*\.*\])",
+        'KuhnPoker-v0-train': r"\[(Check|Bet|Fold|Call)\]",
+        'Nim-v0-train': r"\[\s*(\d+)\s+(\d+)\s*\]",
+        'LiarsDice-v0-train': r"\[call\]|\[bid\s*:?\s*(\d+)[,\s]+(\d+)\]",
+    }
+    return action_spaces[env_id] if env_id in action_spaces else None
 
 
 def extract_action_and_format_feedback(raw_action: str) -> Tuple[str, Dict[str, bool]]:

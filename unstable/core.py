@@ -2,9 +2,11 @@ from dataclasses import dataclass, field
 from collections import defaultdict, Counter
 from typing import List, Dict, Tuple
 import trueskill, math, ray, random, time
+import numpy as np
 import re
 # local imports
 # from unstable.tracker import WandBTracker
+from unstable.utils.templates import get_action_space
 
 @dataclass
 class Trajectory:
@@ -44,11 +46,12 @@ class Opponent:
 
 @ray.remote
 class ModelPool:
-    def __init__(self, sample_mode, max_active_lora, tracker=None, lag_range=(1,7), beta=4.0):
+    def __init__(self, sample_mode, max_active_lora, tracker=None, lag_range=(1,7), beta=4.0, keep_n_most_diverse: int = -1):
         self.TS = trueskill.TrueSkill(beta=beta)
         self._models   = {}         # uid -> Opponent dataclass
         self._ckpt_log = []         # ordered list of checkpoint uids
         self.lag_lo, self.lag_hi = lag_range
+        self.keep_n_most_diverse = keep_n_most_diverse
         self.sample_mode = sample_mode #"self-play", "lagged", "fixed", "adaptive-trueskill"
         self.max_active_lora = max_active_lora
         self._latest_uid = None
@@ -129,7 +132,13 @@ class ModelPool:
     def _sample_random_opponent(self):
         fixed = [u for u,m in self._models.items() if m.kind=="fixed"]
         checkpoints = [u for u,m in self._models.items() if (m.kind=="checkpoint" and m.active==True)]
-        return random.choice(fixed+checkpoints)
+        if self.keep_n_most_diverse > 0:
+            print('PAST OPPONENTS:', checkpoints + fixed)
+            most_diverse = self._filter_redundant_opponents(checkpoints + fixed, to_keep=self.keep_n_most_diverse, n_gram=2)
+            print('MOST DIVERSE MODELS:', most_diverse)
+            return random.choice(most_diverse + random.choices(checkpoints + fixed, k=1)) # Still give each model a chance to be sampled
+        else:
+            return random.choice(checkpoints + fixed)
     
     def _sample_match_quality_opponent(self, uid_me: str) -> str:
         """ Pick an opponent with probability ∝ TrueSkill match-quality """
@@ -183,38 +192,14 @@ class ModelPool:
             return None
         return random.choices(cand, weights=weights, k=1)[0]
 
-    def _sample_exploration_opponent(self, uid_me: str):
-        def _jensen_shannon_divergence(p, q, epsilon=1e-10):
-            def _kl_divergence(p, q, epsilon=1e-10):
-                keys = set(p) | set(q)
-                return sum(
-                    p.get(k, 0.0) * math.log2(p.get(k, epsilon) / q.get(k, epsilon))
-                    for k in keys if p.get(k, 0.0) > 0
-                )
-            keys = set(p) | set(q)
-            m = {
-                k: 0.5 * (p.get(k, 0.0) + q.get(k, 0.0))
-                for k in keys
-            }
-            kl_p_m = _kl_divergence(p, m, epsilon); kl_q_m = _kl_divergence(q, m, epsilon)
-            return 0.5 * (kl_p_m + kl_q_m)
+    def _sample_ts_dist_biased_exploration(self, uid_me: str):
         cand, quality, diversity = [], [], []
         for uid, opp in self._models.items():
             if uid == uid_me or not opp.active:
                 continue
             cand.append(uid)
 
-            # Mean JS divergence between the action distributions of the two models
-            js_divs = []; common_envs = set(self._models[uid_me].actions.keys()) & set(opp.actions.keys())
-            for env_id in common_envs:
-                p = self._models[uid_me].actions[env_id][3]; q = opp.actions[env_id][3]
-                if p and q:
-                    js = _jensen_shannon_divergence(p, q)
-                    js_divs.append(js)
-            if js_divs: diversity.append(sum(js_divs) / len(js_divs))
-            else: diversity.append(0.0)
-
-            # TrueSkill match quality
+            diversity.append(self._n_gram_distance(uid_me, uid, n=3))
             quality.append(math.exp((opp.rating.mu-self._models[uid_me].rating.mu)/25))
 
         quality_sum = sum(quality); diversity_sum = sum(diversity)
@@ -225,6 +210,25 @@ class ModelPool:
         if not cand:
             return None
         return random.choices(cand, weights=weights, k=1)[0]
+
+    def _sample_exploration_opponent(self, uid_me: str):
+        cands = [uid for uid in self._models if uid != uid_me and self._models[uid].active]
+        if not cands:
+            return None
+
+        # Compute pairwise JSD distance matrix
+        dist_matrix = np.zeros((len(cands), len(cands)))
+        for i, uid_i in enumerate(cands):
+            for j, uid_j in enumerate(cands):
+                if i < j:
+                    d = self._n_gram_distance(uid_i, uid_j)
+                    dist_matrix[i, j] = dist_matrix[j, i] = d
+
+        # Weight according to average distance for each candidate
+        avg_distances = np.mean(dist_matrix, axis=1)
+        weights = avg_distances / np.sum(avg_distances) if np.sum(avg_distances) > 0 else np.ones_like(avg_distances) / len(avg_distances)
+
+        return random.choices(cands, weights=weights, k=1)[0]
 
     def update_ratings(self, uid_me, uid_opp, final_reward):
         if uid_me not in self._models or uid_opp not in self._models:
@@ -249,21 +253,29 @@ class ModelPool:
         # register the game for tracking
         self._register_game(uid_me=uid_me, uid_opp=uid_opp)
 
-    def add_trajectory(self, uid, pid, env_id: str, traj: Trajectory, alpha=0.01):
+
+    def add_trajectory(self, uid, uid_opp, pid, env_id: str, traj: Trajectory, alpha=0.001):
         def _extract_ngrams(input_list, n):
             return [tuple(input_list[i:i+n]) for i in range(len(input_list) - n + 1)]
         if env_id not in self._models[uid].actions: self._models[uid].actions[env_id] = {1: {}, 2: {}, 3: {}, 4: {}, 5: {}}
+        if env_id not in self._models[uid_opp].actions: self._models[uid_opp].actions[env_id] = {1: {}, 2: {}, 3: {}, 4: {}, 5: {}}
 
-        # TODO: How to check if a move was valid when TextArena Envs allow multiple invalid moves before done=True? Can TextArena envs not keep the regex as a "action space" attribute? Then I can use that to check if the move was valid.
-        actions = [match.group(1) for match in [re.compile(r"\[\s*(\d+)\s*\]").search(a) for a in traj.extracted_actions] if match is not None]
+        actions = [match.group(1) for match in [re.compile(get_action_space(env_id)).search(a) for a in traj.extracted_actions] if match is not None]
 
-        for n in [1, 2, 3, 4, 5]:
+        for n in range(1, 6):
             n_grams = Counter(_extract_ngrams([a for p, a in zip(traj.pid, actions) if p == pid], n))
             for n_gram in set(self._models[uid].actions[env_id][n]) | set(n_grams):
                 past = self._models[uid].actions[env_id][n].get(n_gram, 0.0)
                 new = n_grams.get(n_gram, 0.0)
                 self._models[uid].actions[env_id][n][n_gram] = (1 - alpha) * past + alpha * new
-                if self._models[uid].actions[env_id][n][n_gram] < 0.001: del self._models[uid].actions[env_id][n][n_gram]
+                if self._models[uid].actions[env_id][n][n_gram] < 0.0005: del self._models[uid].actions[env_id][n][n_gram]
+            
+            n_grams_opponent = Counter(_extract_ngrams([a for p, a in zip(traj.pid, actions) if p != pid], n))
+            for n_gram in set(self._models[uid_opp].actions[env_id][n]) | set(n_grams_opponent):
+                past = self._models[uid_opp].actions[env_id][n].get(n_gram, 0.0)
+                new = n_grams_opponent.get(n_gram, 0.0)
+                self._models[uid_opp].actions[env_id][n][n_gram] = (1 - alpha) * past + alpha * new
+                if self._models[uid_opp].actions[env_id][n][n_gram] < 0.0005: del self._models[uid_opp].actions[env_id][n][n_gram]
         
         if self._tracker:
             self._tracker.log_action_n_grams.remote(action_n_grams=self._models[uid].actions[env_id], env_id=env_id)
@@ -280,38 +292,41 @@ class ModelPool:
         cands = [uid for uid, m in self._models.items() if m.kind == "checkpoint" and uid != current]
         if not cands: return # only the current ckpt exists
 
-        cur_rating = self._models[current].rating
-        β = self.TS.beta
-
-        # score candidates according to sampling mode
-        scores = {}
-        if self.sample_mode in {"random", "lagged"}: # more recent → smaller index in ckpt log
-            scores = {uid: -self._ckpt_log.index(uid) for uid in cands}
-
-        elif self.sample_mode == "match-quality":
-            for uid in cands:
-                scores[uid] = self.TS.quality([cur_rating, self._models[uid].rating]) # higher is better
-
-        elif self.sample_mode == "ts-dist":
-            for uid in cands:
-                scores[uid] = -abs(cur_rating.mu - self._models[uid].rating.mu) # larger (i.e. −distance) is better
-
-        elif self.sample_mode == "ts-dist-biased":
-            pos, neg = {}, {}
-            for uid in cands:
-                delta = self._models[uid].rating.mu - cur_rating.mu
-                (pos if delta >= 0 else neg)[uid] = delta
-            # keep strongest positives first; if not enough, use closest negatives
-            ordered = (sorted(pos, key=pos.__getitem__, reverse=True) + sorted(neg, key=lambda u: abs(neg[u])))
-            scores = {uid: len(ordered) - i for i, uid in enumerate(ordered)}# bigger rank ⇒ bigger score
-
+        if self.sample_mode == "exploration":
+            keep = {current} | set(self._filter_redundant_opponents(cands, to_keep=self.max_active_lora, n_gram=2))
+            print('MOST DIVERSE MODELS:', keep)
         else:
-            # default fallback: recent
-            scores = {uid: -self._ckpt_log.index(uid) for uid in cands}
+            cur_rating = self._models[current].rating
+            β = self.TS.beta
 
-        # pick the N best, plus the current ckpt
-        N = self.max_active_lora - 1 # slot for current already reserved
-        keep = {current} | set(sorted(scores, key=scores.__getitem__, reverse=True)[:max(0, N)])
+            # score candidates according to sampling mode
+            scores = {}
+            if self.sample_mode in {"random", "lagged"}: # more recent → smaller index in ckpt log
+                scores = {uid: -self._ckpt_log.index(uid) for uid in cands}
+
+            elif self.sample_mode == "match-quality":
+                for uid in cands:
+                    scores[uid] = self.TS.quality([cur_rating, self._models[uid].rating]) # higher is better
+
+            elif self.sample_mode == "ts-dist":
+                for uid in cands:
+                    scores[uid] = -abs(cur_rating.mu - self._models[uid].rating.mu) # larger (i.e. −distance) is better
+
+            elif self.sample_mode == "ts-dist-biased":
+                pos, neg = {}, {}
+                for uid in cands:
+                    delta = self._models[uid].rating.mu - cur_rating.mu
+                    (pos if delta >= 0 else neg)[uid] = delta
+                # keep strongest positives first; if not enough, use closest negatives
+                ordered = (sorted(pos, key=pos.__getitem__, reverse=True) + sorted(neg, key=lambda u: abs(neg[u])))
+                scores = {uid: len(ordered) - i for i, uid in enumerate(ordered)}# bigger rank ⇒ bigger score
+            else:
+                # default fallback: recent
+                scores = {uid: -self._ckpt_log.index(uid) for uid in cands}
+
+            # pick the N best, plus the current ckpt
+            N = self.max_active_lora - 1 # slot for current already reserved
+            keep = {current} | set(sorted(scores, key=scores.__getitem__, reverse=True)[:max(0, N)])
 
         # flip active flags
         for uid, opp in self._models.items():
@@ -328,7 +343,6 @@ class ModelPool:
         self._match_counts[pair] += 1
 
 
-    # TODO: Track action n-gram distances between model_pool and current_model over time. 
     def snapshot(self, iteration: int):
         self._step_counter = iteration
         for uid, opp in self._models.items():
@@ -338,9 +352,53 @@ class ModelPool:
         if self._tracker: self._tracker.log_matchup_counts.remote(step=iteration, counts=dict(self._match_counts))
 
 
+    def _filter_redundant_opponents(self, cands: List[str], to_keep: int = 5, n_gram: int = 3):
+            """Keep only the most diverse models"""
+            # Compute full pairwise JSD distance matrix
+            dist_matrix = np.zeros((len(cands), len(cands)))
+            for i, uid_i in enumerate(cands):
+                for j, uid_j in enumerate(cands):
+                    if i < j:
+                        d = self._n_gram_distance(uid_i, uid_j, n_gram)
+                        dist_matrix[i, j] = dist_matrix[j, i] = d
+
+            # Greedy max-min selection
+            selected = [np.argmax(np.mean(dist_matrix, axis=1))]  # start with the most average one
+            while len(selected) < min(to_keep, len(cands)):
+                remaining = [i for i in range(len(cands)) if i not in selected]
+                next_idx = max(remaining, key=lambda i: min(dist_matrix[i][j] for j in selected))
+                selected.append(next_idx)
+
+            if self._tracker:
+                self._tracker.log_pairwise_n_gram_distances.remote(dist_matrix=dist_matrix, uids=cands)
+
+            return [cands[i] for i in selected]
+
+    def _n_gram_distance(self, uid_me, uid_opp, n: int = 3):
+        js_divs = []; common_envs = set(self._models[uid_me].actions.keys()) & set(self._models[uid_opp].actions.keys())
+        for env_id in common_envs:
+            p = self._models[uid_me].actions[env_id][n]; q = self._models[uid_opp].actions[env_id][n]
+            if p and q:
+                js = self._jensen_shannon_divergence(p, q)
+                js_divs.append(js)
+        if js_divs: return sum(js_divs) / len(js_divs)
+        else: return 0.0
 
 
-
+    def _jensen_shannon_divergence(self, p, q, epsilon=1e-10):
+        def _kl_divergence(p, q, epsilon=1e-10):
+            keys = set(p) | set(q)
+            return sum(
+                p.get(k, 0.0) * math.log2(p.get(k, epsilon) / q.get(k, epsilon))
+                for k in keys if p.get(k, 0.0) > 0
+            )
+        keys = set(p) | set(q)
+        m = {
+            k: 0.5 * (p.get(k, 0.0) + q.get(k, 0.0))
+            for k in keys
+        }
+        kl_p_m = _kl_divergence(p, m, epsilon); kl_q_m = _kl_divergence(q, m, epsilon)
+        return 0.5 * (kl_p_m + kl_q_m)
 
 
 
