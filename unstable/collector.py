@@ -129,7 +129,6 @@ class Collector:
                     traj.pid.append(pid); traj.obs.append(prompt)
                     traj.actions.append(raw); fb["invalid_move"] = 0; traj.extracted_actions.append(act)
                     traj.infos.append(info)
-                    traj.board_states.append(env.state.game_state['board'] if 'board' in env.state.game_state else None)
                     traj.format_feedbacks.append(fb)
                 else:
                     done, info = env.step(opponent(obs))

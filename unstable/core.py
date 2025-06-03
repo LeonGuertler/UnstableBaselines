@@ -18,7 +18,6 @@ class Trajectory:
     final_rewards: Dict[int, float] = field(default_factory=dict)
     num_turns: int = field(default_factory=int)
     format_feedbacks: List[Dict] = field(default_factory=list)
-    board_states: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -133,9 +132,7 @@ class ModelPool:
         fixed = [u for u,m in self._models.items() if m.kind=="fixed"]
         checkpoints = [u for u,m in self._models.items() if (m.kind=="checkpoint" and m.active==True)]
         if self.keep_n_most_diverse > 0:
-            print('PAST OPPONENTS:', checkpoints + fixed)
             most_diverse = self._filter_redundant_opponents(checkpoints + fixed, to_keep=self.keep_n_most_diverse, n_gram=2)
-            print('MOST DIVERSE MODELS:', most_diverse)
             return random.choice(most_diverse + random.choices(checkpoints + fixed, k=1)) # Still give each model a chance to be sampled
         else:
             return random.choice(checkpoints + fixed)
@@ -188,25 +185,6 @@ class ModelPool:
         weights_sum = sum(weights)
         for i in range(len(weights)):
             weights[i] = weights[i]/weights_sum
-        if not cand:
-            return None
-        return random.choices(cand, weights=weights, k=1)[0]
-
-    def _sample_ts_dist_biased_exploration(self, uid_me: str):
-        cand, quality, diversity = [], [], []
-        for uid, opp in self._models.items():
-            if uid == uid_me or not opp.active:
-                continue
-            cand.append(uid)
-
-            diversity.append(self._n_gram_distance(uid_me, uid, n=3))
-            quality.append(math.exp((opp.rating.mu-self._models[uid_me].rating.mu)/25))
-
-        quality_sum = sum(quality); diversity_sum = sum(diversity)
-        for i in range(len(quality)):
-            quality[i] = quality[i]/quality_sum if quality_sum > 0 else 0.0
-            diversity[i] = diversity[i]/diversity_sum if diversity_sum > 0 else 0.0
-        weights = [0.7*q + 0.3*d for q, d in zip(quality, diversity)]
         if not cand:
             return None
         return random.choices(cand, weights=weights, k=1)[0]
@@ -294,7 +272,6 @@ class ModelPool:
 
         if self.sample_mode == "exploration":
             keep = {current} | set(self._filter_redundant_opponents(cands, to_keep=self.max_active_lora, n_gram=2))
-            print('MOST DIVERSE MODELS:', keep)
         else:
             cur_rating = self._models[current].rating
             β = self.TS.beta

@@ -3,7 +3,7 @@ import unstable
 import unstable.reward_transformations as retra
 
 # set the relevant parameters
-NUM_ACTORS = 2
+NUM_ACTORS = 3
 NUM_LEARNERS = 1
 
 MODEL_NAME = "Qwen/Qwen3-4B-base"
@@ -27,7 +27,7 @@ lora_config = {
 vllm_config = {
     "model_name": MODEL_NAME, 
     "temperature": 0.7,
-    "max_tokens": 4096,
+    "max_tokens": 2598,
     "max_parallel_seq": 384,
     "max_loras": 5,
     "lora_config": lora_config
@@ -47,13 +47,13 @@ EVALUATION_ENVS = [
     ("SimpleNegotiation-v0-train", 2, "qwen3-zs")
 ]
 
-WANDB_RUN_NAME = f"Batch-1-Experiment-0--{MODEL_NAME.split('/')[-1]}-[{','.join([t[0] for t in TRAINING_ENVS])}]-{int(time.time())}"
+WANDB_RUN_NAME = f"Batch-1-Experiment-1--{MODEL_NAME.split('/')[-1]}-[{','.join([t[0] for t in TRAINING_ENVS])}]-{int(time.time())}"
 
 
 ray.init()
 
 # initialize the tracker to keep wandb up to date and print as necessary
-tracker = unstable.WandBTracker.options(name="Tracker").remote(wandb_run_name=WANDB_RUN_NAME, exploration_env_id=["SimpleTak-v0-train"]) # , exploration_env_id=["SimpleTak-v0-train"]) for exploration metrics
+tracker = unstable.WandBTracker.options(name="Tracker").remote(wandb_run_name=WANDB_RUN_NAME)
 
 # build the reward transformations to be used
 # final_reward_transformation = retra.ComposeFinalRewardTransforms([
@@ -66,7 +66,7 @@ step_reward_transformation = retra.ComposeStepRewardTransforms([
 ])
 sampling_reward_transformation = retra.ComposeSamplingRewardTransforms([
     # retra.NormalizeRewardsByEnv(z_score=False) # normalize the sampled batch
-    retra.NormalizeRewards(z_score=False) # normalize the sampled batch
+    retra.NormalizeRewards() # normalize the sampled batch
 ])
 
 # initialize the StepBuffer (used to hold and sample from collected traces)

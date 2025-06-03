@@ -53,7 +53,7 @@ WANDB_RUN_NAME = f"Batch-2-Experiment-1--{MODEL_NAME.split('/')[-1]}-[{','.join(
 ray.init()
 
 # initialize the tracker to keep wandb up to date and print as necessary
-tracker = unstable.WandBTracker.options(name="Tracker").remote(wandb_run_name=WANDB_RUN_NAME, exploration_env_id=["SimpleTak-v0-train"]) # , exploration_env_id=["SimpleTak-v0-train"]) for exploration metrics
+tracker = unstable.WandBTracker.options(name="Tracker").remote(wandb_run_name=WANDB_RUN_NAME)
 
 # build the reward transformations to be used
 final_reward_transformation = retra.ComposeFinalRewardTransforms([
