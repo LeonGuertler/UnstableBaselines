@@ -35,10 +35,10 @@ def qwen3_template_reasoning(observation: str) -> str:
 def extract_action_and_format_feedback(raw_action: str) -> Tuple[str, Dict[str, bool]]:
     matches = re.findall(r"\\boxed\{(.*?)\}", raw_action)
     
-    if matches:
-        action = matches[-1]  # Take the last one
+    if matches and matches[-1].strip():
+        action = matches[-1].strip()  # Get non-empty boxed content
         if "[" not in action:
-            action = f"[{action.strip()}]"
+            action = f"[{action}]"
         has_think = 1
     else:
         action = raw_action
