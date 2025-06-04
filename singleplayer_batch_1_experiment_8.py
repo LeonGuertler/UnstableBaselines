@@ -12,7 +12,7 @@ BATCH_SIZE = 384
 BUFFER_SIZE = BATCH_SIZE*2
 GRADIENT_ACCUMULATION_STEPS = 384
 
-LR = 1e-4
+LR = 5e-5
 GRAD_CLIP = 0.2
 
 
@@ -34,10 +34,10 @@ vllm_config = {
 }
 TRAINING_ENVS = [
     # ("Wordle-v0-train", 1, "qwen3-single-player"), 
-    ("FrozenLake-v0-train-random", 1, "qwen3-single-player"), 
+    # ("FrozenLake-v0-train-random", 1, "qwen3-single-player"), 
     # ("Sokoban-v0-train", 1, "qwen3-single-player"), 
     # ("Mastermind-v0-train", 1, "qwen3-single-player"), 
-    # ("Minesweeper-v0-train", 1, "qwen3-single-player"), 
+    ("Minesweeper-v0-train", 1, "qwen3-single-player"), 
 ]
 
 # No need for evaluation envs in single player mode
@@ -49,7 +49,7 @@ EVALUATION_ENVS = [
     ("Minesweeper-v0-train", 1, "qwen3-single-player"), 
 ]
 
-WANDB_RUN_NAME = f"SinglePlayer-Batch-1-Experiment-0--{MODEL_NAME.split('/')[-1]}-[{','.join([t[0] for t in TRAINING_ENVS])}]-{int(time.time())}"
+WANDB_RUN_NAME = f"SinglePlayer-Batch-1-Experiment-8--{MODEL_NAME.split('/')[-1]}-[{','.join([t[0] for t in TRAINING_ENVS])}]-{int(time.time())}"
 
 
 ray.init()

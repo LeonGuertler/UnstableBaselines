@@ -49,7 +49,7 @@ EVALUATION_ENVS = [
     ("Minesweeper-v0-train", 1, "qwen3-single-player"), 
 ]
 
-WANDB_RUN_NAME = f"SinglePlayer-Batch-1-Experiment-0--{MODEL_NAME.split('/')[-1]}-[{','.join([t[0] for t in TRAINING_ENVS])}]-{int(time.time())}"
+WANDB_RUN_NAME = f"SinglePlayer-Batch-1-Experiment-5--{MODEL_NAME.split('/')[-1]}-[{','.join([t[0] for t in TRAINING_ENVS])}]-{int(time.time())}"
 
 
 ray.init()
@@ -68,7 +68,7 @@ step_reward_transformation = retra.ComposeStepRewardTransforms([
 ])
 # step_reward_transformation = None
 sampling_reward_transformation = retra.ComposeSamplingRewardTransforms([
-    retra.NormalizeRewardsByEnv(z_score=True) # normalize the sampled batch
+    retra.NormalizeRewardsByEnv(z_score=False) # normalize the sampled batch
 ])
 # sampling_reward_transformation = None
 
