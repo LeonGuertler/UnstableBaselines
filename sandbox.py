@@ -18,7 +18,7 @@ agents = {
 
 # initialize the environment
 
-env = ta.make(env_id="FrozenLake-v0-train-random")
+env = ta.make(env_id="Wordle-v0-train")
 # env = ta.wrappers.GameMessagesAndCurrentBoardWithInvalidMovesObservationWrapper(env=env)
 # env = ta.make(env_id="Poker-v0-train-small")
 # env = ta.wrappers.GameMessagesAndCurrentBoardObservationWrapper(env=env)
