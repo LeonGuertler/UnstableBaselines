@@ -3,14 +3,14 @@ import unstable
 import unstable.reward_transformations as retra
 
 # set the relevant parameters
-NUM_ACTORS = 7
-NUM_LEARNERS = 1
+NUM_ACTORS = 2
+NUM_LEARNERS = 2
 
 MODEL_NAME = "Qwen/Qwen3-4B-base"
 
-BATCH_SIZE = 768
-BUFFER_SIZE = 768*2
-GRADIENT_ACCUMULATION_STEPS = 768
+BATCH_SIZE = 20
+BUFFER_SIZE = 20*2
+GRADIENT_ACCUMULATION_STEPS = 20
 
 LR = 1e-5
 GRAD_CLIP = 0.2
@@ -123,13 +123,14 @@ collector = unstable.Collector.options(name="Collector").remote(
 
 
 # build learner
-learner = unstable.Learner.options(num_gpus=NUM_LEARNERS, name="Learner").remote(
+learner = unstable.Learner.remote(
     num_learners=NUM_LEARNERS,
     tracker=tracker,
     model_name=MODEL_NAME,
     step_buffer=step_buffer,
     model_pool=model_pool,
-    algorithm=unstable.algorithms.Reinforce(), # if you use something else, this is the place to pass stuff
+    algorithm_cls=unstable.algorithms.Reinforce, # if you use something else, this is the place to pass stuff
+    # algorithm_cls=unstable.algorithms.PPO, # if you use something else, this is the place to pass stuff
     batch_size=BATCH_SIZE,
     gradient_accum_steps=GRADIENT_ACCUMULATION_STEPS,
     learning_rate=LR,
@@ -141,7 +142,7 @@ learner = unstable.Learner.options(num_gpus=NUM_LEARNERS, name="Learner").remote
 
 
 try:
-    collector.collect.remote(num_workers=512, num_eval_workers=32)
+    collector.collect.remote(num_workers=20, num_eval_workers=2)
     ray.get(learner.train.remote(200))
 finally:
     ray.kill(collector, no_restart=True)
