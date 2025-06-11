@@ -10,7 +10,7 @@ from safetensors.torch import load_file as safe_load
 from ray.data import from_items
 from ray.train.torch import TorchTrainer, prepare_model
 from ray.train.torch import TorchConfig
-from ray.train import ScalingConfig, get_context
+from ray.train import ScalingConfig, get_context, RunConfig
 from ray.train import get_dataset_shard
 
 # local imports
@@ -60,84 +60,106 @@ def _train_loop(config):
     tokenizer = AutoTokenizer.from_pretrained(config["model_name"], trust_remote_code=True)
     optimizer = torch.optim.AdamW(filter(lambda p: p.requires_grad, model.parameters()), lr=config["learning_rate"])
 
-    _step = 0 
+    _step = 0
     _samples_seen = 0
     print('[Trainer] Starting training loop')
     while True:
-        if ray.get(config["buffer"].size.remote()) >= config["batch_size"] * config["batch_delay_buffer"]:
-            mini_batch = ray.get(config["buffer"].get_batch.remote(config["mini_batch_size"]))
-            _samples_seen += len(mini_batch)
-            print(f"[Learner] Starting training step with minibatch size {len(mini_batch)}")
-            optimizer.zero_grad(set_to_none=True)
-            tokenizer.pad_token = tokenizer.eos_token
-            model.train()
-            micro_bs = config["mini_batch_size"] // config["grad_accum_per_learner"]
-            metrics_acc: Dict[str, float] = {}
-            for i in range(config["grad_accum_per_learner"]):
-                micro_batch = mini_batch[i * micro_bs : (i + 1) * micro_bs]
+        if rank == 0:
+            while ray.get(config["buffer"].size.remote()) < config["batch_size"] * config["batch_delay_buffer"]:
+                print(f"[Learner] Waiting for buffer to fill. Current size: {ray.get(config['buffer'].size.remote())} ({config['batch_size'] * config['batch_delay_buffer']})")
+                time.sleep(2.0)
+        if torch.distributed.is_initialized():
+            print(f"[Learner] Waiting for buffer to fill")
+            torch.distributed.barrier()
+            print(f"[Learner] Buffer filled")
 
-                # REINFORCE
-                obs, acts, advs = zip(*[(s.obs, s.act, s.reward) for s in micro_batch])
-                advs = torch.tensor(advs, dtype=torch.float32, device=model.device)
-                enc = tokenizer([o + a for o, a in zip(obs, acts)], return_tensors="pt", padding=True)
-                enc = enc.to(model.device)
-                print(f"[Learner] Tokenized and predicting now")
-                out = model(input_ids=enc["input_ids"], attention_mask=enc["attention_mask"])
-                logp = torch.nn.functional.log_softmax(out.logits, dim=-1)
-                tgt_ids = enc["input_ids"][:, 1:]
-                tok_logp = logp[:, :-1, :].gather(-1, tgt_ids.unsqueeze(-1)).squeeze(-1)
-                mask = torch.ones_like(enc["input_ids"], dtype=torch.bool, device=model.device)
-                for k, z in enumerate(obs):
-                    L = len(tokenizer(z, add_special_tokens=False)["input_ids"])
-                    mask[k, :L] = False
-                mask = mask[:, 1:]
-                seq_logp = (tok_logp * mask).sum(1) / mask.sum(1).clamp(min=1)
-                loss = -(advs * seq_logp).mean() / config["gradient_accum_steps"]
-                print(f"[Learner] Loss: {loss.item()}")
+        mini_batch = ray.get(config["buffer"].get_batch.remote(config["mini_batch_size"]))
+        _samples_seen += len(mini_batch)
+        print(f"[Learner] Starting training step with minibatch size {len(mini_batch)}")
+        optimizer.zero_grad(set_to_none=True)
+        tokenizer.pad_token = tokenizer.eos_token
+        model.train()
+        micro_bs = config["mini_batch_size"] // config["grad_accum_per_learner"]
+        metrics_acc: Dict[str, float] = {}
+        for i in range(config["grad_accum_per_learner"]):
+            micro_batch = mini_batch[i * micro_bs : (i + 1) * micro_bs]
+
+            # REINFORCE
+            obs, acts, advs = zip(*[(s.obs, s.act, s.reward) for s in micro_batch])
+            advs = torch.tensor(advs, dtype=torch.float32, device=model.device)
+            enc = tokenizer([o + a for o, a in zip(obs, acts)], return_tensors="pt", padding=True)
+            enc = enc.to(model.device)
+            out = model(input_ids=enc["input_ids"], attention_mask=enc["attention_mask"])
+            logp = torch.nn.functional.log_softmax(out.logits, dim=-1)
+            tgt_ids = enc["input_ids"][:, 1:]
+            tok_logp = logp[:, :-1, :].gather(-1, tgt_ids.unsqueeze(-1)).squeeze(-1)
+            mask = torch.ones_like(enc["input_ids"], dtype=torch.bool, device=model.device)
+            for k, z in enumerate(obs):
+                L = len(tokenizer(z, add_special_tokens=False)["input_ids"])
+                mask[k, :L] = False
+            mask = mask[:, 1:]
+            seq_logp = (tok_logp * mask).sum(1) / mask.sum(1).clamp(min=1)
+            loss = -(advs * seq_logp).mean() / config["gradient_accum_steps"]
+            print(f"[Learner] Loss: {loss.item()}")
+            if torch.distributed.is_initialized() and hasattr(model, "no_sync") and i < config["grad_accum_per_learner"] - 1:
+                with model.no_sync():
+                    print(f"[Learner] No sync backward")
+                    loss.backward()
+            else:
+                print(f"[Learner] Backward")
                 loss.backward()
 
-                metrics_acc["loss"] = metrics_acc.get("loss", 0.0) + loss.item()
-                metrics_acc["logp_mean"] = metrics_acc.get("logp_mean", 0.0) + seq_logp.mean().item()
-                metrics_acc["logp_std"] = metrics_acc.get("logp_std", 0.0) + seq_logp.std().item()
-                metrics_acc["num_steps"] = metrics_acc.get("num_steps", 0) + len(micro_batch)
+            metrics_acc["loss"] = metrics_acc.get("loss", 0.0) + loss.item()
+            metrics_acc["logp_mean"] = metrics_acc.get("logp_mean", 0.0) + seq_logp.mean().item()
+            metrics_acc["logp_std"] = metrics_acc.get("logp_std", 0.0) + seq_logp.std().item()
+            metrics_acc["num_steps"] = metrics_acc.get("num_steps", 0) + len(micro_batch)
 
-            torch.nn.utils.clip_grad_norm_(model.parameters(), config["grad_clip"])
-            print(f"[Learner] Before optimizer step")
-            optimizer.step()
-            print(f"[Learner] After optimizer step")
-            _step += 1
+        torch.nn.utils.clip_grad_norm_(model.parameters(), config["grad_clip"])
+        print(f"[Learner] Before optimizer step")
+        optimizer.step()
+        print(f"[Learner] After optimizer step")
+        _step += 1
+        if torch.distributed.is_initialized():
+            print(f"[Learner] Barrier")
+            torch.distributed.barrier()
+            print(f"[Learner] Barrier done")
 
-            # --- LOGGING ---
-            if tracker is not None and rank == 0:
-                log = {f"learner/{k}": v / config["gradient_accum_steps"] for k, v in metrics_acc.items()}
-                log.update({
-                    "learner/step": _step, 
-                    "learner/samples_seen": _samples_seen * config["mini_batch_size"], 
-                    "learner/lr": optimizer.param_groups[0]["lr"], 
-                    "learner/grad_norm": sum(p.grad.data.norm(2).item()**2 for p in model.parameters() if p.grad is not None) ** 0.5
-                })
-                tracker.log_learner.remote(log)
+        # --- LOGGING ---
+        if tracker is not None and rank == 0:
+            log = {f"learner/{k}": v / config["gradient_accum_steps"] for k, v in metrics_acc.items()}
+            log.update({
+                "learner/step": _step, 
+                "learner/samples_seen": _samples_seen * config["mini_batch_size"], 
+                "learner/lr": optimizer.param_groups[0]["lr"], 
+                "learner/grad_norm": sum(p.grad.data.norm(2).item()**2 for p in model.parameters() if p.grad is not None) ** 0.5
+            })
+            tracker.log_learner.remote(log)
 
-            # === SAVE CHECKPOINT ===
-            if rank == 0 and _step % config["save_every"] == 0:
-                ckpt_dir = config["ckpt_root"] / f"iteration-{_step}"
-                ckpt_dir.mkdir(parents=True, exist_ok=True)
-                model = model.module if hasattr(model,'module') else model
-                model.save_pretrained(ckpt_dir, save_adapter=True)
-                _last_ckpt = ckpt_dir
-                print(f"[Learner] saved → {ckpt_dir}")
+        # === SAVE CHECKPOINT ===
+        if rank == 0 and _step % config["save_every"] == 0:
+            ckpt_dir = config["ckpt_root"] / f"iteration-{_step}"
+            ckpt_dir.mkdir(parents=True, exist_ok=True)
+            model = model.module if hasattr(model,'module') else model
+            model.save_pretrained(ckpt_dir, save_adapter=True)
+            _last_ckpt = ckpt_dir
+            print(f"[Learner] saved → {ckpt_dir}")
 
-                if model_pool and _last_ckpt:
-                    model_pool.add_checkpoint.remote(str(_last_ckpt), _step)
-                    print(f"[Learner] ↪registered → {_last_ckpt}")
-                    model_pool.snapshot.remote(_step)
-        else:
-            print(f"[Learner] waiting for buffer to fill. Current size: {ray.get(config['buffer'].size.remote())} ({config['batch_size'] * config['batch_delay_buffer']})")
-            time.sleep(5.0)
+            if model_pool and _last_ckpt:
+                model_pool.add_checkpoint.remote(str(_last_ckpt), _step)
+                print(f"[Learner] ↪registered → {_last_ckpt}")
+                model_pool.snapshot.remote(_step)
 
-        
-    
     return {"steps": _step, "samples_seen": _samples_seen}
+
+
+def get_free_port():
+    import socket
+    s = socket.socket()
+    s.bind(('', 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
 
 @ray.remote
 class Learner:
@@ -201,4 +223,8 @@ class Learner:
                 num_workers=self.num_learners,
                 use_gpu=True
             ),
+            torch_config=TorchConfig(
+                backend="nccl",
+                timeout_s=3600,
+            )
         ).fit()

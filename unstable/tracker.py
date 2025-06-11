@@ -32,7 +32,7 @@ class WandBTracker:
 
 
     def _build_output_dir(self, output_dir):
-        self.output_dir = os.path.join("outputs", str(datetime.datetime.now().strftime('%Y-%m-%d')), str(datetime.datetime.now().strftime('%H-%M-%S')), self.wandb_name) if not output_dir else output_dir
+        self.output_dir = os.path.abspath(os.path.join("outputs", str(datetime.datetime.now().strftime('%Y-%m-%d')), str(datetime.datetime.now().strftime('%H-%M-%S')), self.wandb_name)) if not output_dir else output_dir
         os.makedirs(self.output_dir)
 
         self.output_dir_train = os.path.join(self.output_dir, "training_data"); os.makedirs(self.output_dir_train, exist_ok=True)
