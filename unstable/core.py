@@ -1,4 +1,4 @@
-import os, ray, torch, datetime, trueskill
+import os, ray, torch, datetime, trueskill, math
 from dataclasses import dataclass, field
 from collections import Counter, deque
 from typing import List, Dict, Optional
@@ -34,13 +34,6 @@ class Opponent:
     rating: trueskill.Rating # trueskill.Rating(mu, sigma)
     active: bool = True
 
-    # Action History Tracking
-    unigrams: Counter = field(default_factory=Counter)
-    bigrams: Counter = field(default_factory=Counter)
-    trigrams: Counter = field(default_factory=Counter)
-    fourgrams: Counter = field(default_factory=Counter)
-    fivegrams: Counter = field(default_factory=Counter)
-    
 
 class BaseAlgo:
     def initialize(self, model, tokenizer, device, max_train_len: Optional[int]= None, accelerator=None):
@@ -57,6 +50,7 @@ class BaseAlgo:
     def update(self, batch):
         """ One gradient update on *this worker only*. Must call .backward() but NOT .step(). Return latest loss as float (for logging) """
         raise NotImplementedError
+
 
 class BaseTracker:
     def __init__(self, run_name: str, output_dir: Optional[str] = None):

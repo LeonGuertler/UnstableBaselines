@@ -167,11 +167,13 @@ class Collector:
                     act = opponent(obs)
                     done, info = env.step(act)
                 turn += 1
+
+                current_uid = model_uid if pid == player_id else opponent_uid
+                if current_uid not in game_action_seq: game_action_seq[current_uid] = []
+                game_action_seq[current_uid].append(_extract_action(act, env.action_space(pid)))
+
                 if done:
                     break
-
-                if pid not in game_action_seq: game_action_seq[pid] = []
-                game_action_seq[pid].append(_extract_action(act, env.action_space(pid)))
                 
             traj.final_rewards = env.close()
             traj.num_turns = turn
