@@ -1,5 +1,6 @@
 import os, ray, torch, datetime, trueskill
 from dataclasses import dataclass, field
+from collections import Counter, deque
 from typing import List, Dict, Optional
 
 
@@ -33,6 +34,13 @@ class Opponent:
     rating: trueskill.Rating # trueskill.Rating(mu, sigma)
     active: bool = True
 
+    # Action History Tracking
+    unigrams: Counter = field(default_factory=Counter)
+    bigrams: Counter = field(default_factory=Counter)
+    trigrams: Counter = field(default_factory=Counter)
+    fourgrams: Counter = field(default_factory=Counter)
+    fivegrams: Counter = field(default_factory=Counter)
+    
 
 class BaseAlgo:
     def initialize(self, model, tokenizer, device, max_train_len: Optional[int]= None, accelerator=None):
@@ -69,4 +77,3 @@ class BaseTracker:
     def add_trajectory(self, trajectory: Trajectory, player_id: int, env_id: str): raise NotImplementedError
     def add_eval_episode(self, episode_info: Dict, final_reward: int, player_id: int, env_id: str, iteration: int): raise NotImplementedError
     def log_lerner(self, info_dict: Dict): raise NotImplementedError
-

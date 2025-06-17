@@ -113,7 +113,8 @@ class Tracker(BaseTracker):
 
         # exploration metrics
         for n, c in exploration.items():
-            self._buffer[f"pool/exploration/{n}"] = c
+            if '/' in n: self._buffer[f"exploration-{n.split('/')[0]}/{n.split('/')[1]}"] = c
+            else: self._buffer[f"exploration/{n}"] = c
         self._flush(force=True)
         self._ts_snapshot = ts_dict
         self._match_counts = match_counts

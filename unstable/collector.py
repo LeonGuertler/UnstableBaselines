@@ -49,8 +49,9 @@ def _iter_from_uid(uid: str) -> int:
     match = re.search(r"(\d+)$", uid)
     return int(match.group(1)) if match else 0
 
-def _extract_action(action: str) -> str:
-    match = re.search(r"\[(.*?)\]", action)
+def _extract_action(action: str, action_space=None) -> str:
+    if action_space: match = action_space.search(action)
+    else: match = re.search(r"\[(.*?)\]", action)
     return match.group(1).strip().lower() if match else ""
 
 
@@ -139,7 +140,7 @@ class Collector:
             obs_format = OBSERVATION_FORMATTING[prompt_template]
             extract_fn = ACTION_EXTRACTION[action_extraction]
             model = CallableActorWrapper(actor, lora_path, obs_format, extract_fn)
-            game_action_seq = []
+            game_action_seq = {}
 
             if opponent_uid is None:                opponent = model
             elif opponent_uid.startswith("ckpt-"):  opponent = CallableActorWrapper(actor, opponent_path_or_name, obs_format, extract_fn)
@@ -169,7 +170,9 @@ class Collector:
                 if done:
                     break
 
-                game_action_seq.append(_extract_action(act))
+                if pid not in game_action_seq: game_action_seq[pid] = []
+                game_action_seq[pid].append(_extract_action(act, env.action_space(pid)))
+                
             traj.final_rewards = env.close()
             traj.num_turns = turn
             if info["end_by_invalid"] and pid==player_id:  
@@ -245,7 +248,7 @@ class Collector:
                 self.buffer.add_trajectory.remote(traj, pid, env_id)
                 if self.tracker: self.tracker.add_trajectory.remote(traj, pid, env_id)
                 if opp_uid is not None:
-                    self.model_pool.push_game_outcome.remote(uid_me=mdl_uid, uid_opp=opp_uid, final_reward=traj.final_rewards[pid], game_action_seq=game_action_seq)
+                    self.model_pool.push_game_outcome.remote(uid_me=mdl_uid, uid_opp=opp_uid, final_reward=traj.final_rewards[pid], game_action_seq=game_action_seq, env_id=env_id)
                 continue  # back to top of loop
 
             idx = next(i for i, (f, *_) in enumerate(eval_flight) if f == finished)
