@@ -170,7 +170,7 @@ class ModelPool:
             for env_id in self._recent_actions.unigrams.keys():
                 stats[f"{env_id}/unique {n} (last 100)"] = stats.get(f"{env_id}/unique {n} (last 100)", set()) | self._recent_actions.unique(n, env_id)
                 stats[f"{env_id}/{n} entropy (last 100)"] = self._recent_actions.entropy(n, env_id)
-                stats[f"all/{n} entropy (last 100)"] = stats.get(f"all/{n} entropy (last 100)", 0) + self._recent_actions.entropy(n, env_id)
+                stats[f"all/{n} entropy (last 100)"] = stats.get(f"all/{n} entropy (last 100)", []) + [self._recent_actions.entropy(n, env_id)]
                 stats[f"all/unique {n} (last 100)"] = stats.get(f"all/unique {n} (last 100)", set()) | self._recent_actions.unique(n, env_id)
             for actions in self._actions.values():
                 for env_id in getattr(actions, n).keys():
@@ -179,7 +179,7 @@ class ModelPool:
                     stats[f"all/{n} (all)"] = stats.get(f"all/{n} (all)", 0) + actions.count(n, env_id)
                     stats[f"all/unique {n} (all)"] = stats.get(f"all/unique {n} (all)", set()) | actions.unique(n, env_id)
         for i in [k for k in stats if "unique" in k]: stats[i] = len(stats[i])
-        for i in [k for k in stats if "entropy" in k]: stats[i] = stats[i] / len(stats[i])
+        for i in [k for k in stats if ("entropy" in k) and ("all" in k)]: stats[i] = sum(stats[i]) / len(stats[i])
 
         return stats
     
