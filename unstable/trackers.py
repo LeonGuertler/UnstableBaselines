@@ -99,7 +99,7 @@ class Tracker(BaseTracker):
         self._flush()
         self._eval_snapshot = self._aggregate("evaluation")
 
-    def log_model_pool(self, step: int, match_counts: dict, ts_dict: dict, exploration: dict) -> None:
+    def log_model_pool(self, step: int, match_counts: dict, ts_dict: dict, action_distribution: dict) -> None:
         ckpt_ids = [u for u in ts_dict if re.fullmatch(r"ckpt-\d+", u)]
         cur = max(ckpt_ids, key=lambda u: int(u.split("-")[1]), default=None)
         if cur is not None:
@@ -111,10 +111,10 @@ class Tracker(BaseTracker):
         table = wandb.Table(columns=["uid_a", "uid_b", "games"], data=[[*pair, cnt] for pair, cnt in top])
         self._buffer["pool/top_matchups"] = table
 
-        # exploration metrics
-        for n, c in exploration.items():
-            if '/' in n: self._buffer[f"exploration-{n.split('/')[0]}/{n.split('/')[1]}"] = c
-            else: self._buffer[f"exploration/{n}"] = c
+        # action distribution
+        for n, c in action_distribution.items():
+            if '/' in n: self._buffer[f"actions-{n.split('/')[0]}/{n.split('/')[1]}"] = c
+            else: self._buffer[f"actions/{n}"] = c
         self._flush(force=True)
         self._ts_snapshot = ts_dict
         self._match_counts = match_counts

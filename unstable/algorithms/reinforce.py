@@ -24,10 +24,17 @@ class Reinforce(BaseAlgo):
         for i, o in enumerate(obs): mask[i, :len(self.tokenizer(o, add_special_tokens=False)["input_ids"])] = False
         mask = mask[:, 1:]
         seq_logp = (tok_logp * mask).sum(1) / mask.sum(1).clamp(min=1)
+        
+        # calculate token-level entropy
+        probs = torch.exp(logp[:, :-1, :])
+        entropy = -(probs * logp[:, :-1, :]).sum(dim=-1)  # entropy per token
+        seq_entropy = (entropy * mask).sum(1) / mask.sum(1).clamp(min=1)
+        
         loss = -(advs * seq_logp).mean() / scaling
         loss.backward()
         torch.cuda.empty_cache()
         return {
             "loss": loss.item(), "logp_mean": seq_logp.mean().item(), "logp_std": seq_logp.std().item(),
-            "num_steps": len(steps), "avg_train_len": avg_len, "pct_truncated": pct_truncated
+            "num_steps": len(steps), "avg_train_len": avg_len, "pct_truncated": pct_truncated,
+            "entropy_mean": seq_entropy.mean().item(), "entropy_std": seq_entropy.std().item()
         }

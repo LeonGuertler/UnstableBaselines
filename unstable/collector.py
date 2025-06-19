@@ -52,7 +52,7 @@ def _iter_from_uid(uid: str) -> int:
 def _extract_action(action: str, action_space=None) -> str:
     if action_space: match = action_space.search(action)
     else: match = re.search(r"\[(.*?)\]", action)
-    return match.group(1).strip().lower() if match else ""
+    return match.group(1).strip().lower() if match else None
 
 
 @ray.remote
@@ -170,7 +170,8 @@ class Collector:
 
                 current_uid = model_uid if pid == player_id else opponent_uid
                 if current_uid not in game_action_seq: game_action_seq[current_uid] = []
-                game_action_seq[current_uid].append(_extract_action(act, env.action_space(pid)))
+                extracted_action = _extract_action(act, env.action_space(pid))
+                if extracted_action is not None: game_action_seq[current_uid].append(extracted_action)
 
                 if done:
                     break

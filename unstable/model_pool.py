@@ -5,45 +5,7 @@ from typing import List, Dict
 from dataclasses import dataclass, field
 
 # local imports
-from unstable.core import Opponent
-
-
-# TODO: add to opponent class
-@dataclass
-class ActionSeqTracker:
-    envs: List[str] = field(default_factory=list)
-    unigrams: Dict[str, Dict[str, Counter]] = field(default_factory=dict) # Env -> {Opponent -> Counter}
-    bigrams: Dict[str, Dict[str, Counter]] = field(default_factory=dict)
-    trigrams: Dict[str, Dict[str, Counter]] = field(default_factory=dict)
-    fourgrams: Dict[str, Dict[str, Counter]] = field(default_factory=dict)
-    fivegrams: Dict[str, Counter] = field(default_factory=dict)
-
-    def add(self, action_seq: List[str], env_id: str, opp_uid: str):
-        for n, name in [(1,"unigrams"), (2, "bigrams"), (3, "trigrams"), (4, "fourgrams"), (5, "fivegrams")]:
-            attr = getattr(self, name)
-            if env_id not in attr: attr[env_id] = {}; self.envs.append(env_id)
-            if opp_uid not in attr[env_id]: attr[env_id][opp_uid] = Counter()
-
-            attr[env_id][opp_uid].update(Counter([tuple(action_seq[i:i+n]) for i in range(len(action_seq) - n + 1)]))
-    
-    def unique(self, n: str, env_id: str):
-        return set(sum([c for c in getattr(self, n)[env_id].values()], Counter()).keys())
-    
-    def count(self, n: str, env_id: str):
-        return sum(sum([c for c in getattr(self, n)[env_id].values()], Counter()).values())
-    
-    def unique_count(self, n: str, env_id: str):
-        return len(self.unique_ngrams(n, env_id))
-    
-    def entropy(self, n: str, env_id: str):
-        return -sum(p * math.log2(p) for p in self._normalize_ngrams(sum([c for c in getattr(self, n)[env_id].values()], Counter())).values() if p > 0)
-    
-    def opponents(self, env_id: str):
-        return set([opp_uid for n in ["unigrams", "bigrams", "trigrams", "fourgrams", "fivegrams"] for opp_uid in getattr(self, n)[env_id].keys()])
-    
-    @staticmethod
-    def _normalize_ngrams(ngrams): total = sum(ngrams.values()); return {k: v / total for k, v in ngrams.items()}
-
+from unstable.core import Opponent, ActionSeqTracker
 
 @ray.remote
 class ModelPool:
@@ -60,7 +22,8 @@ class ModelPool:
         # for tracking
         self._match_counts = defaultdict(int) # (uid_a, uid_b) -> games played
         self._step_counter = 0 # learner step snapshot id
-        self.action_tracker = {}
+        self._recent_actions = ActionSeqTracker(sliding_window_size=100)
+        self._actions = {} # uid -> ActionSeqTracker
         self._tracker = tracker
 
     def current_uid(self):
@@ -163,10 +126,11 @@ class ModelPool:
         self._register_game(uid_me=uid_me, uid_opp=uid_opp) # register the game for tracking
 
         # track action sequences
-        if uid_me not in self.action_tracker: self.action_tracker[uid_me] = ActionSeqTracker()
-        self.action_tracker[uid_me].add(game_action_seq[uid_me], env_id, uid_opp)
-        if uid_opp not in self.action_tracker: self.action_tracker[uid_opp] = ActionSeqTracker()
-        self.action_tracker[uid_opp].add(game_action_seq[uid_opp], env_id, uid_me)
+        self._recent_actions.add(game_action_seq[uid_me], env_id, uid_opp)
+        if uid_me not in self._actions: self._actions[uid_me] = ActionSeqTracker()
+        self._actions[uid_me].add(game_action_seq[uid_me], env_id, uid_opp)
+        if uid_opp not in self._actions: self._actions[uid_opp] = ActionSeqTracker()
+        self._actions[uid_opp].add(game_action_seq[uid_opp], env_id, uid_me)
 
         self.snapshot(self._step_counter)
         
@@ -200,15 +164,23 @@ class ModelPool:
             if opp.kind != "checkpoint": continue
             opp.active = (uid in keep)
     
-    def _get_exploration_ratios(self):
+    def action_stats(self):
         stats = {}
         for n in ["unigrams", "bigrams", "trigrams", "fourgrams", "fivegrams"]:
-            for tracker in self.action_tracker.values():
-                for env_id in tracker.envs:
-                    stats[f"{env_id}/{n}"] = tracker.count(n, env_id)
-                    stats[f"{env_id}/unique {n}"] = stats.get(f"{env_id}/unique {n}", set()) | tracker.unique(n, env_id)
+            for env_id in self._recent_actions.unigrams.keys():
+                stats[f"{env_id}/unique {n} (last 100)"] = stats.get(f"{env_id}/unique {n} (last 100)", set()) | self._recent_actions.unique(n, env_id)
+                stats[f"{env_id}/{n} entropy (last 100)"] = self._recent_actions.entropy(n, env_id)
+                stats[f"all/{n} entropy (last 100)"] = stats.get(f"all/{n} entropy (last 100)", 0) + self._recent_actions.entropy(n, env_id)
+                stats[f"all/unique {n} (last 100)"] = stats.get(f"all/unique {n} (last 100)", set()) | self._recent_actions.unique(n, env_id)
+            for actions in self._actions.values():
+                for env_id in getattr(actions, n).keys():
+                    stats[f"{env_id}/{n} (all)"] = stats.get(f"{env_id}/{n} (all)", 0) + actions.count(n, env_id)
+                    stats[f"{env_id}/unique {n} (all)"] = stats.get(f"{env_id}/unique {n} (all)", set()) | actions.unique(n, env_id)
+                    stats[f"all/{n} (all)"] = stats.get(f"all/{n} (all)", 0) + actions.count(n, env_id)
+                    stats[f"all/unique {n} (all)"] = stats.get(f"all/unique {n} (all)", set()) | actions.unique(n, env_id)
         for i in [k for k in stats if "unique" in k]: stats[i] = len(stats[i])
-        
+        for i in [k for k in stats if "entropy" in k]: stats[i] = stats[i] / len(stats[i])
+
         return stats
     
     def snapshot(self, iteration: int):
@@ -216,7 +188,7 @@ class ModelPool:
         self._tracker.log_model_pool.remote(
             step=iteration, match_counts=dict(self._match_counts), 
             ts_dict={uid: {"mu": opp.rating.mu, "sigma": opp.rating.sigma} for uid,opp in self._models.items()},
-            exploration=self._get_exploration_ratios(),
+            action_distribution=self.action_stats(),
         )
 
     def get_snapshot(self):

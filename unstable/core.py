@@ -71,3 +71,48 @@ class BaseTracker:
     def add_trajectory(self, trajectory: Trajectory, player_id: int, env_id: str): raise NotImplementedError
     def add_eval_episode(self, episode_info: Dict, final_reward: int, player_id: int, env_id: str, iteration: int): raise NotImplementedError
     def log_lerner(self, info_dict: Dict): raise NotImplementedError
+
+
+class ActionSeqTracker:
+    def __init__(self, sliding_window_size: int = None):
+        assert sliding_window_size is None or sliding_window_size > 0, "sliding_window_size must be None or > 0"
+
+        self.sliding_window_size = sliding_window_size
+        self.unigrams, self.bigrams, self.trigrams, self.fourgrams, self.fivegrams = {}, {}, {}, {}, {} # Env -> Opponent -> Counter of n-grams
+        if self.sliding_window_size:
+            self.unigrams_deque, self.bigrams_deque, self.trigrams_deque, self.fourgrams_deque, self.fivegrams_deque = {}, {}, {}, {}, {}
+
+    def add(self, action_seq: List[str], env_id: str, opp_uid: str):
+        for n, name in [(1,"unigrams"), (2, "bigrams"), (3, "trigrams"), (4, "fourgrams"), (5, "fivegrams")]:
+            attr = getattr(self, name)
+            if env_id not in attr: attr[env_id] = {}
+            if opp_uid not in attr[env_id]: attr[env_id][opp_uid] = Counter()
+            n_grams = [tuple(action_seq[i:i+n]) for i in range(len(action_seq) - n + 1)]
+            attr[env_id][opp_uid].update(Counter(n_grams))
+
+            if self.sliding_window_size:
+                queues = getattr(self, f"{name}_deque")
+                if env_id not in queues: queues[env_id] = deque()
+                queue = queues[env_id]
+                queue.append((opp_uid,n_grams))
+                if len(queue) > self.sliding_window_size:
+                    removed_step = queue.popleft()
+                    attr[env_id][removed_step[0]].subtract(removed_step[1]); attr[env_id][removed_step[0]] += Counter()
+
+    def unique(self, n: str, env_id: str):
+        return set(sum(getattr(self, n)[env_id].values(), Counter()).keys())
+    
+    def count(self, n: str, env_id: str):
+        return sum(sum(getattr(self, n)[env_id].values(), Counter()).values())
+    
+    def unique_count(self, n: str, env_id: str):
+        return len(self.unique(n, env_id))
+    
+    def entropy(self, n: str, env_id: str):
+        return -sum(p * math.log2(p) for p in self._normalize_ngrams(sum(getattr(self, n)[env_id].values(), Counter())).values() if p > 0)
+    
+    def opponents(self, env_id: str):
+        return set([opp_uid for n in ["unigrams", "bigrams", "trigrams", "fourgrams", "fivegrams"] for opp_uid in getattr(self, n)[env_id].keys()])
+    
+    @staticmethod
+    def _normalize_ngrams(ngrams): total = sum(ngrams.values()); return {k: v / total for k, v in ngrams.items()}
