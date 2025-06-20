@@ -8,6 +8,6 @@ from unstable.core import BaseTracker
 from unstable.trackers import Tracker
 
 from unstable.terminal_interface import TerminalInterface
+from unstable.utils.components import StateActionExploration
 
-
-__all__ = ["Collector", "StepBuffer", "ModelPool", "StandardLearner", "MultiGPULearner", "Tracker", "TerminalInterface"]
+__all__ = ["Collector", "StepBuffer", "ModelPool", "StandardLearner", "MultiGPULearner", "Tracker", "TerminalInterface", "StateActionExploration"]

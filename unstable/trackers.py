@@ -132,6 +132,10 @@ class Tracker(BaseTracker):
             self._buffer.update(flat_stats)
             self._flush()
 
+    def log(self, log_dict: dict):
+        self._buffer.update(log_dict)
+        self._flush()
+
     def get_latest_inference_metrics(self) -> dict[str, dict[str, float]]: return self._inference
     def get_gpu_tok_rates(self) -> dict[int, float]: return {gid: (rate if time.monotonic() - self._gpu_last_seen[gid] <= self._gpu_timeout else 0.0) for gid, rate in self._gpu_tok_rate.items()}
     def get_latest_learner_metrics(self): return {k.split('/',1)[1]: v for k,v in self._buffer.items() if k.startswith('learner/')}

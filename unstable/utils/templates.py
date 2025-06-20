@@ -48,6 +48,17 @@ def extract_action_and_format_feedback(raw_action: str) -> Tuple[str, Dict[str, 
     return action, format_feedback
 
 
+def iter_from_uid(uid: str) -> int:
+    """ Extracts numerical iteration from UID strings like 'ckpt-123'. Defaults to 0 if no number is found """
+    match = re.search(r"(\d+)$", uid)
+    return int(match.group(1)) if match else 0
+
+
+def extract_action(action: str, action_space=None) -> str:
+    if action_space: match = action_space.search(action)
+    else: match = re.search(r"\[(.*?)\]", action)
+    return match.group(1).strip().lower() if match else None
+
 
 OBSERVATION_FORMATTING: Dict[str, Callable[[str], str]] = {key: (lambda key=key: lambda observation: apply_template(key, observation))() for key in TEMPLATE_PARTS}
 ACTION_EXTRACTION = {"default": extract_action_and_format_feedback}
