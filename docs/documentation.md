@@ -789,55 +789,53 @@ Logging utility documentation.
 ## Configuration Reference <a id="configuration-reference"></a>
 
 Below are recommended configurations for different VRAM capacities. We strongly recommend using **one GPU as a learner** and dedicating **remaining GPUs as actors** for inference.
-Currently you will need at least 2 gpus to run the code (1 learner and 1 actor); we plan to relax this requirement in the future. Here are some rough guidelines on which parameter settings to use for what model size and hardware:
+Currently you will need at least 2 gpus to run the code (1 learner and 1 actor); we plan to relax this requirement in the future. Here are some rough guidelines on which parameter settings to use for what model size and hardware (all of these assume 4096 generation length and are tested on SimpleTak):
 
 ### Qwen3 1.7B
 | VRAM | Activation Checkpointing | Gradient Checkpointing | Train Length Truncation |
 | ---- | :----------------------: | :--------------------: | :---------------------: |
-| 12GB | TODO                     | TODO                   | TOOD                    |
 | 16GB | TOOD                     | TOOD                   | TOOD                    |
-| 24GB | TOOD                     | TOOD                   | TOOD                    |
-| 48GB+| TOOD                     | TOOD                   | TOOD                    |
+| 24GB | True                     | True                   | 3500                    |
+| 48GB+| False                    | False                  | None                    |
 
 ### Llama3.2 3B
 | VRAM | Activation Checkpointing | Gradient Checkpointing | Train Length Truncation |
 | ---- | :----------------------: | :--------------------: | :---------------------: |
-| 12GB | TOOD                     | TOOD                   | TOOD                    |
 | 16GB | TOOD                     | TOOD                   | TOOD                    |
-| 24GB | TOOD                     | TOOD                   | TOOD                    |
-| 48GB | TOOD                     | TOOD                   | TOOD                    |
-| 80GB+| TOOD                     | TOOD                   | TOOD                    |
+| 24GB | True                     | True                   | 3000                    |
+| 48GB | True                     | True                   | None                    |
+| 80GB+| False                    | False                  | None                    |
 
 ### Qwen3 4B
 | VRAM | Activation Checkpointing | Gradient Checkpointing | Train Length Truncation |
 | ---- | :----------------------: | :--------------------: | :---------------------: |
-| 16GB | TOOD                     | TOOD                   | TOOD                    |
-| 24GB | TOOD                     | TOOD                   | TOOD                    |
-| 48GB | TOOD                     | TOOD                   | TOOD                    |
-| 80GB+| TOOD                     | TOOD                   | TOOD                    |
+| 24GB | True                     | True                   | 1500                    |
+| 48GB | True                     | True                   | None                    |
+| 80GB+| False                    | False                  | None                    |
 
 ### Qwen3 8B
 | VRAM  | Activation Checkpointing | Gradient Checkpointing | Train Length Truncation |
 | ----- | :----------------------: | :--------------------: | :---------------------: |
-| 24GB  | TOOD                     | TOOD                   | TOOD                    |
-| 32GB  | TOOD                     | TOOD                   | TOOD                    |
-| 48GB  | TOOD                     | TOOD                   | TOOD                    |
+| 48GB  | True                     | True                   | 3500 (also try 4k)      |
 | 80GB+ | TOOD                     | TOOD                   | TOOD                    |
 
+### Qwen3 14B
+| VRAM  | Activation Checkpointing | Gradient Checkpointing | Train Length Truncation |
+| ----- | :----------------------: | :--------------------: | :---------------------: |
+| 48GB  | TOOD                     | TOOD                   | 1500                    |
+| 80GB+ | TOOD                     | TOOD                   | TOOD                    |
 
-### 2. Additional Tips
-* **Activation Checkpointing** significantly reduces VRAM usage but incurs roughly 20-30% longer training times.
+* **Activation Checkpointing** significantly reduces VRAM usage (~50-60%) but incurs roughly 20-30% longer training times.
 * **Gradient Checkpointing** slightly reduces memory with minimal impact on speed.
-* **Train Length Truncation** controls maximum input token length, with shorter lengths substantially reducing VRAM requirements.
-* Adjust batch sizes carefully—larger batch sizes may require lower truncation lengths.
+* **Train Length Truncation** controls maximum input token length, with shorter lengths substantially reducing VRAM requirements (only truncates for training; works surprisingly well in practice).
+* We usually run everything with mini-batch-size = 1
 
 
 
 ---
-
  
 ## Contributing <a id="contributing"></a>
-Guidelines on contributing to the project.
+TODO Guidelines on contributing to the project.
 
 ---
 
