@@ -1,3 +1,4 @@
 from unstable.learners.standard_learner import StandardLearner
-__all__ = ["StandardLearner"]
+from unstable.learners.a2c_learner import A2CLearner
+__all__ = ["StandardLearner", "A2CLearner"]
 

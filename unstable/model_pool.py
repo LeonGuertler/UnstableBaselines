@@ -28,7 +28,7 @@ class ModelPool:
 
     def current_uid(self):      return self._latest_uid
     def latest_ckpt(self):      return self._ckpt_log[-1] if self._ckpt_log else None
-    def ckpt_path(self, uid):   return None if uid is (None, "ckpt") else (self._models[uid].path_or_name, self._models[uid].kind)
+    def ckpt_path(self, uid):   return (None, "ckpt") if uid is None else (self._models[uid].path_or_name, self._models[uid].kind)
 
     def add_checkpoint(self, path: str, iteration: int):
         uid = f"ckpt-{iteration}"

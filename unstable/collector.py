@@ -137,7 +137,7 @@ class Collector:
             case _:         self.logger.warning(f"Unknown task type {meta.type}")
 
     def _post_train(self, meta: TaskMeta, res: EpisodeResult):
-        self.logger.info("train_done", extra=dict(env=meta.env_id, ckpt=meta.ckpt_uid, length=len(res.traj.pid), invalid=res.end_by_opponent_invalid))
+        print("train_done", dict(env=meta.env_id, ckpt=meta.ckpt_uid, length=len(res.traj.pid), invalid=res.end_by_opponent_invalid))
         if self.filter_invalid and res.end_by_opponent_invalid: return
         self.buffer.add_trajectory.remote(res.traj, meta.player_id, meta.env_id)
         self.tracker.add_trajectory.remote(res.traj, meta.player_id, meta.env_id)

@@ -1,2 +1,3 @@
 from unstable.algorithms.reinforce import Reinforce
-__all__ = ["Reinforce"]
+from unstable.algorithms.a2c import AdvantageActorCritic
+__all__ = ["Reinforce", "AdvantageActorCritic"]
