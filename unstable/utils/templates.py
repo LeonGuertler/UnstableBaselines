@@ -17,7 +17,7 @@ TEMPLATE_PARTS = {
     },
     "qwen3-reasoning": {
         "user": lambda obs: f"<|im_start|>user\nPlease reason step by step, and put your final answer within \\boxed{{}}.\nQuestion: {obs}<|im_end|>\n",
-        "assistant": "<|im_start|>assistant\n"
+        "assistant": "<|im_start|>assistant\n<think>"
     },
     "gemma3-zs": {
         "user": lambda obs: f"<bos><start_of_turn>user\nYou are playing a two-player zero-sum game. Make valid actions to win.\nObservation: {obs}\nPlease reason step by step, and put your final answer within \\boxed{{}}.<end_of_turn>\n",

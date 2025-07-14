@@ -43,7 +43,7 @@ class ModelRegistry:
 
     def update_ratings(self, uids: List[str], scores: List[float], env_id: str, dummy_uid: str="fixed-env") -> None:
         if len(uids) == 1:
-            if dummy_uid not in self._db: self.add_fixed(name=dummy_uid, prior_mu=25.0)
+            if dummy_uid not in self._db: self.add_fixed(name=dummy_uid.replace("fixed-", ""), prior_mu=25.0)
             uids = [uids[0], dummy_uid]
             scores = [scores[0], 0.0] # any baseline score works
         rating_groups = [[self._db[uid].rating] for uid in uids]
