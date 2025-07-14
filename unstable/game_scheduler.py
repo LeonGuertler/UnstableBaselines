@@ -1,4 +1,4 @@
-import ray, random
+import ray, random, json
 from unstable.utils import setup_logger
 from unstable._types import AgentSpec, GameSpec, GameInformation
 
@@ -52,10 +52,17 @@ class GameScheduler:
             time.sleep(500)
 
     def update(self, game_info: GameInformation):
+        self.logger.info(
+            f"[GameScheduler] Game {game_info.game_idx} summary:\n"
+            f"- Rewards: {json.dumps(game_info.final_rewards, indent=2)}\n"
+            f"- Turns: {game_info.num_turns}\n"
+            f"- Player Info: {json.dumps(game_info.game_info, indent=2)}"
+        )
         job_info = self._running_jobs.pop(game_info.game_idx, None)
         if job_info is None: return # shouldn’t happen
         actor_rs = [game_info.final_rewards[m["pid"]] for m in job_info["models"] if m["type"] == "model" if m["pid"] in game_info.final_rewards]
         opp_rs = [game_info.final_rewards[m["pid"]] for m in job_info["models"] if m["type"] == "opponent" if m["pid"] in game_info.final_rewards]
-        self.env_sampler.update(avg_actor_reward=(sum(actor_rs) / len(actor_rs) if actor_rs else None), avg_opponent_reward=(sum(opp_rs) / len(opp_rs) if opp_rs else None)) # update environment sampling 
+        # to check - what is one job_info's worth of rewards? 1 game, or a batch of games?
+        self.env_sampler.update(env_id=job_info["env_id"], avg_actor_reward=(sum(actor_rs) / len(actor_rs) if actor_rs else None), avg_opponent_reward=(sum(opp_rs) / len(opp_rs) if opp_rs else None)) # update environment sampling 
         self.model_sampler.update(game_info=game_info, job_info=job_info) # update model sampler
 

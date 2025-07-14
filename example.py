@@ -2,17 +2,17 @@ import time, ray, unstable
 import unstable.reward_transformations as retra
 
 # always uses 1 learner and the remainder of the GPUS as actors
-COLLECTION_WORKERS = 384
+COLLECTION_WORKERS = 150
 EVALUATION_WORKERS = 16
 ITERATIONS = 200
-# MODEL_NAME = "Qwen/Qwen3-4B-Base"
-MODEL_NAME = "meta-llama/Llama-3.2-3B-Instruct"
+MODEL_NAME = "Qwen/Qwen3-4B-Base"
+# MODEL_NAME = "meta-llama/Llama-3.2-3B-Instruct"
 BATCH_SIZE = 384
 MINI_BATCH_SIZE = 1
 BUFFER_SIZE = 384*2
 LR = 1e-5
 GRAD_CLIP = 0.2
-MAX_TRAIN_SEQ_LEN = None
+MAX_TRAIN_SEQ_LEN = 3000
 MAX_GENERATION_LENGTH = 4096 
 
 # vRAM optimization
@@ -35,15 +35,34 @@ vllm_config = {
 ray.init(namespace="unstable")  
 
 # initialize environment scheduler
-env_sampler = unstable.samplers.env_samplers.UniformRandomEnvSampler(
+# env_sampler = unstable.samplers.env_samplers.UniformRandomEnvSampler(
+#     train_env_specs=[
+#         unstable.TrainEnvSpec(env_id="2048-v0-ultra-easy-train", num_players=1, num_actors=1, prompt_template="qwen3-sp"), # if num_players == num_actors, it's mirror self-play and no opponents will be sampled
+#         # unstable.TrainEnvSpec(env_id="SimpleTak-v0-train", num_players=2, num_actors=2, prompt_template="qwen3-zs"),
+#     ],
+#     eval_env_specs=[
+#         unstable.EvalEnvSpec(env_id="SimpleTak-v0-train", num_players=2, prompt_template="qwen3-zs"),
+#         unstable.EvalEnvSpec(env_id="KuhnPoker-v0-train", num_players=2, prompt_template="qwen3-zs"),
+# ])
+
+# initialize the reward env sampler
+env_sampler = unstable.samplers.env_samplers.RewardSampler(
     train_env_specs=[
-        unstable.TrainEnvSpec(env_id="SimpleTak-v0-train", num_players=2, num_actors=2, prompt_template="qwen3-zs"), # if num_players == num_actors, it's mirror self-play and no opponents will be sampled
+        unstable.TrainEnvSpec(env_id="2048-v0-ultra-easy-train", num_players=1, num_actors=1, prompt_template="qwen3-sp"), # if num_players == num_actors, it's mirror self-play and no opponents will be sampled
+        unstable.TrainEnvSpec(env_id="2048-v0-mega-easy-train", num_players=1, num_actors=1, prompt_template="qwen3-sp"), # if num_players == num_actors, it's mirror self-play and no opponents will be sampled
         # unstable.TrainEnvSpec(env_id="SimpleTak-v0-train", num_players=2, num_actors=2, prompt_template="qwen3-zs"),
+        unstable.TrainEnvSpec(env_id="WordLadder-v0-train", num_players=1, num_actors=1, prompt_template="qwen3-sp"),
+        unstable.TrainEnvSpec(env_id="WordLadder-v0-medium-train", num_players=1, num_actors=1, prompt_template="qwen3-sp"),
+    ],
+    env_chains = [
+        ["2048-v0-ultra-easy-train","2048-v0-mega-easy-train"],
+        ["WordLadder-v0-train","WordLadder-v0-medium-train"]
     ],
     eval_env_specs=[
         unstable.EvalEnvSpec(env_id="SimpleTak-v0-train", num_players=2, prompt_template="qwen3-zs"),
         unstable.EvalEnvSpec(env_id="KuhnPoker-v0-train", num_players=2, prompt_template="qwen3-zs"),
-])
+    ]
+)
 
 # Tracker
 tracker = unstable.Tracker.options(name="Tracker").remote(
