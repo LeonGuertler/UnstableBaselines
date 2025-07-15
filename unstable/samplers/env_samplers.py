@@ -63,7 +63,7 @@ class RewardSampler(BaseEnvSampler):
             if idx >= len(chain):
                 continue
             current_env_id = chain[idx]
-            if current_env_id == env_id and avg_reward >= 0.5 and num_plays >= 100:
+            if current_env_id == env_id and avg_reward >= 0.2 and num_plays >= 100:
                 self.chain_indices[chain] = min(idx + 1, len(chain))
                 print(f"[RewardSampler] → Progressed {chain} to {self.chain_indices[chain]} (unlocked {chain[self.chain_indices[chain]-1]})")
 

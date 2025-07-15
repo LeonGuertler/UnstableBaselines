@@ -58,11 +58,41 @@ class GameScheduler:
             f"- Turns: {game_info.num_turns}\n"
             f"- Player Info: {json.dumps(game_info.game_info, indent=2)}"
         )
-        job_info = self._running_jobs.pop(game_info.game_idx, None)
-        if job_info is None: return # shouldn’t happen
-        actor_rs = [game_info.final_rewards[m["pid"]] for m in job_info["models"] if m["type"] == "model" if m["pid"] in game_info.final_rewards]
-        opp_rs = [game_info.final_rewards[m["pid"]] for m in job_info["models"] if m["type"] == "opponent" if m["pid"] in game_info.final_rewards]
-        # to check - what is one job_info's worth of rewards? 1 game, or a batch of games?
-        self.env_sampler.update(env_id=job_info["env_id"], avg_actor_reward=(sum(actor_rs) / len(actor_rs) if actor_rs else None), avg_opponent_reward=(sum(opp_rs) / len(opp_rs) if opp_rs else None)) # update environment sampling 
-        self.model_sampler.update(game_info=game_info, job_info=job_info) # update model sampler
 
+        job_info = self._running_jobs.pop(game_info.game_idx, None)
+        if job_info is None:
+            self.logger.warning(f"[GameScheduler] job_info missing for game_idx={game_info.game_idx}")
+            return
+
+        # 🔍 Log job_info["models"] for clarity
+        self.logger.info(
+            f"[GameScheduler] Game {game_info.game_idx} job_info:\n"
+            f"{json.dumps(job_info['models'], indent=2)}"
+        )
+
+        # 🔍 Compute rewards
+        actor_rs = [
+            game_info.final_rewards[m["pid"]]
+            for m in job_info["models"]
+            if m["type"] == "model" and m["pid"] in game_info.final_rewards
+        ]
+        opp_rs = [
+            game_info.final_rewards[m["pid"]]
+            for m in job_info["models"]
+            if m["type"] == "opponent" and m["pid"] in game_info.final_rewards
+        ]
+
+        # 🔍 Log reward breakdown by type
+        self.logger.info(
+            f"[GameScheduler] Game {game_info.game_idx} reward breakdown:\n"
+            f"- actor_rs (model-controlled): {actor_rs}\n"
+            f"- opp_rs (opponent-controlled): {opp_rs}"
+        )
+
+        # 🧠 Update samplers
+        self.env_sampler.update(
+            env_id=job_info["env_id"],
+            avg_actor_reward=(sum(actor_rs) / len(actor_rs) if actor_rs else None),
+            avg_opponent_reward=(sum(opp_rs) / len(opp_rs) if opp_rs else None),
+        )
+        self.model_sampler.update(game_info=game_info, job_info=job_info)
