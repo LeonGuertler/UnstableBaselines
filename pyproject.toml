@@ -10,7 +10,7 @@ readme = "README.md"
 requires-python = ">=3.10"
 license = { file = "LICENSE" }
 authors = [{name="Leon Guertler", email="Guertlerlo@cfar.a-star.edu.sg"},]
-dependencies = [ "textarena", "wandb", "vllm", "ray>=2.43.0", "torch", "transformers", "peft", "trueskill", "pynvml" ]
+dependencies = [ "textarena", "wandb", "vllm", "ray>=2.43.0", "torch", "transformers", "peft", "trueskill", "pynvml", "dm-tree"]
 
 [tool.setuptools.packages.find]
 include = ["unstable*"]

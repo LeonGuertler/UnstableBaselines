@@ -67,20 +67,15 @@ class VLLMActor:
                     self._req2lora[req_id] = lora
                     self._queued -= 1
                     self._running += 1
-                    self.logger.info(f"path: {path}, lora_ids: {self._lora_ids}")
 
                     if path:
                         if path not in self._lora_ids:
                             self._lora_ids[path] = self._next_lora_id
                             self._next_lora_id += 1
                         lora_req = LoRARequest(path, self._lora_ids[path], path)
-                        self.logger.info(lora_req)
                     else:
                         lora_req = None
-                    self.logger.info(f"Using {lora_req}")
-                    try:
-                        self.engine.add_request(req_id, prompt, self.sampling_params, lora_request=lora_req)
-                        self.logger.debug(f"Added request {req_id} with lora {lora}")
+                    try: self.engine.add_request(req_id, prompt, self.sampling_params, lora_request=lora_req)
                     except Exception as e:
                         self.logger.error(f"Failed to add request {req_id}: {e}")
                         self._running -= 1
