@@ -4,7 +4,7 @@ from typing import List, Dict, Any, Optional
 
 from unstable.buffers import BaseBuffer
 from unstable.trackers import BaseTracker
-from unstable.learners.utils import build_peft_model, enable_full_activation_ckpt
+from unstable.learners.utils import build_peft_model, enable_full_activation_ckpt, remap_device
 from unstable.utils import setup_logger
 
 
@@ -23,7 +23,7 @@ class BaseLearner:
         torch.set_default_dtype(torch.bfloat16)
 
         gpu_ids = ray.get_gpu_ids()
-        self.device = (torch.device(f"cuda:{gpu_ids[0]}") if gpu_ids else torch.device("cpu"))
+        self.device = (remap_device(torch.device(f"cuda:{gpu_ids[0]}")) if gpu_ids else torch.device("cpu"))
         self.policy_model, self.tokenizer = build_peft_model(model_name, self.device, lora_cfg, initial_lora_path)
         self.policy_model.to(torch.bfloat16)
 
