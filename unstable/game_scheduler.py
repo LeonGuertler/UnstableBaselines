@@ -1,4 +1,4 @@
-import ray, random
+import ray, random, json
 from unstable.utils import setup_logger
 from unstable._types import AgentSpec, GameSpec, GameInformation
 
@@ -53,9 +53,10 @@ class GameScheduler:
 
     def update(self, game_info: GameInformation):
         job_info = self._running_jobs.pop(game_info.game_idx, None)
-        if job_info is None: return # shouldn’t happen
-        actor_rs = [game_info.final_rewards[m["pid"]] for m in job_info["models"] if m["type"] == "model" if m["pid"] in game_info.final_rewards]
-        opp_rs = [game_info.final_rewards[m["pid"]] for m in job_info["models"] if m["type"] == "opponent" if m["pid"] in game_info.final_rewards]
-        self.env_sampler.update(avg_actor_reward=(sum(actor_rs) / len(actor_rs) if actor_rs else None), avg_opponent_reward=(sum(opp_rs) / len(opp_rs) if opp_rs else None)) # update environment sampling 
-        self.model_sampler.update(game_info=game_info, job_info=job_info) # update model sampler
-
+        if job_info is None: self.logger.warning(f"[GameScheduler] job_info missing for game_idx={game_info.game_idx}"); return
+        self.logger.info(f"[GameScheduler] Game {game_info.game_idx} job_info:\n"f"{json.dumps(job_info['models'], indent=2)}")
+        actor_rs = [game_info.final_rewards[m["pid"]] for m in job_info["models"] if m["type"] == "model" and m["pid"] in game_info.final_rewards]
+        opp_rs = [game_info.final_rewards[m["pid"]] for m in job_info["models"] if m["type"] == "opponent" and m["pid"] in game_info.final_rewards]
+        self.logger.info(f"[GameScheduler] Game {game_info.game_idx} reward breakdown:\n"f"- actor_rs (model-controlled): {actor_rs}\n"f"- opp_rs (opponent-controlled): {opp_rs}")
+        self.env_sampler.update(env_id=job_info["env_id"],avg_actor_reward=(sum(actor_rs) / len(actor_rs) if actor_rs else None),avg_opponent_reward=(sum(opp_rs) / len(opp_rs) if opp_rs else None))
+        self.model_sampler.update(game_info=game_info, job_info=job_info)
