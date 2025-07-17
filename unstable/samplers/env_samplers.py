@@ -20,15 +20,15 @@ class UniformRandomEnvSampler(BaseEnvSampler):
 
 class CurriculumEnvSampler(BaseEnvSampler):
     def __init__(self, train_env_specs: List[TrainEnvSpec], eval_env_specs: List[EvalEnvSpec] | None = None, rng_seed: int | None = 489,
-                 reward_threshold: float = 0.2, episode_threshold: int = 100, base_prob_weight: float = 0.7, decay_factor: float = 0.2,
-                 plateau_patience: int | None = 500, plateau_window: int = 100, plateau_threshold: float = 0.01):
+                 reward_threshold: float = 0.5, episode_threshold: int = 1000, base_prob_weight: float = 0.7, decay_factor: float = 0.5,
+                 stuck_duration: int | None = 200, stuck_window: int = 50, stuck_threshold: float = 0.05):
         """
-        Environment sampler that progresses through chains based on reward thresholds or plateau detection.
+        Environment sampler that progresses through chains based on reward thresholds or stuck detection.
         
         Args:
-            plateau_patience: If specified, will progress after this many episodes of reward plateau
-            plateau_window: Number of episodes to use for plateau detection (default: 50)
-            plateau_threshold: Maximum improvement rate to consider as plateau (default: 0.01 = 1%)
+            stuck_duration: If specified, will progress after this many episodes of reward stuck
+            stuck_window: Number of episodes to use for stuck detection (default: 50)
+            stuck_threshold: Maximum improvement rate to consider as stuck (default: 0.01 = 1%)
         """
         super().__init__(train_env_specs, eval_env_specs, rng_seed)
 
@@ -43,15 +43,13 @@ class CurriculumEnvSampler(BaseEnvSampler):
         self.decay_factor = decay_factor
         self.passed_envs = set()
         
-        # Plateau detection mechanism
-        self.plateau_patience = plateau_patience
-        self.plateau_window = plateau_window
-        self.plateau_threshold = plateau_threshold
-        self.plateau_progressed = set()  # Track which envs were progressed due to plateau
-        
-        # Track recent rewards for plateau detection
+        # Stuck detection mechanism
+        self.stuck_duration = stuck_duration
+        self.stuck_window = stuck_window
+        self.stuck_threshold = stuck_threshold
+        self.stuck_progressed = set()  # Track which envs were progressed due to stuck
         self.recent_rewards = {env.env_id: [] for env in train_env_specs}
-        self.plateau_episodes = {env.env_id: 0 for env in train_env_specs}  # Episodes since plateau started
+        self.stuck_episodes = {env.env_id: 0 for env in train_env_specs}  # Episodes since stuck started
 
     def _infer_env_chains_from_registry(self) -> list[tuple[str]]:
         from collections import defaultdict
@@ -79,45 +77,31 @@ class CurriculumEnvSampler(BaseEnvSampler):
         for chain in self.env_chains: chain_probs = self._calculate_chain_probabilities(chain); all_probs.update(chain_probs); chained_envs.update(chain)
         return all_probs
 
-    def _is_reward_plateaued(self, env_id: str) -> bool:
-        """Check if reward has plateaued for this environment."""
-        if len(self.recent_rewards[env_id]) < self.plateau_window:
-            return False
+    def _is_reward_stucked(self, env_id: str) -> bool:
+        """Check if reward has stucked for this environment."""
+        if len(self.recent_rewards[env_id]) < self.stuck_window: return False
         
-        recent = self.recent_rewards[env_id][-self.plateau_window:]
-        
-        # Split into first and second half to check improvement
+        recent = self.recent_rewards[env_id][-self.stuck_window:]
         mid = len(recent) // 2
-        first_half = recent[:mid]
-        second_half = recent[mid:]
+        if len(recent[:mid]) == 0 or len(recent[mid:]) == 0: return False
+        first_avg, second_avg = sum(recent[:mid]) / len(recent[:mid]), sum(recent[mid:]) / len(recent[mid:])
         
-        if len(first_half) == 0 or len(second_half) == 0:
-            return False
-        
-        first_avg = sum(first_half) / len(first_half)
-        second_avg = sum(second_half) / len(second_half)
-        
-        # Calculate improvement rate
-        if abs(first_avg) < 1e-6:  # Avoid division by zero
-            improvement_rate = second_avg - first_avg
-        else:
-            improvement_rate = (second_avg - first_avg) / abs(first_avg)
-        
-        # Consider plateaued if improvement is below threshold
-        return improvement_rate < self.plateau_threshold
+        if abs(first_avg) < 1e-6: improvement_rate = second_avg - first_avg
+        else: improvement_rate = (second_avg - first_avg) / abs(first_avg)
+        return improvement_rate < self.stuck_threshold
 
     def _log_current_state(self):
         """Log current state for debugging."""
         print(f"[RewardSampler] Current chain progress: {self.chain_progress}")
         print(f"[RewardSampler] Passed environments: {self.passed_envs}")
-        if self.plateau_patience:
-            print(f"[RewardSampler] Plateau-progressed environments: {self.plateau_progressed}")
-            # Show plateau status for current focus environments
+        if self.stuck_duration:
+            print(f"[RewardSampler] Stuck-progressed environments: {self.stuck_progressed}")
+            # Show stuck status for current focus environments
             for chain in self.env_chains:
                 focus_env = chain[self.chain_progress[chain]]
-                if focus_env in self.plateau_episodes:
-                    plateau_eps = self.plateau_episodes[focus_env]
-                    print(f"[RewardSampler] {focus_env} plateau episodes: {plateau_eps}")
+                if focus_env in self.stuck_episodes:
+                    stuck_eps = self.stuck_episodes[focus_env]
+                    print(f"[RewardSampler] {focus_env} stuck episodes: {stuck_eps}")
         for chain in self.env_chains: 
             chain_probs = self._calculate_chain_probabilities(chain)
             print(f"[RewardSampler] Chain {chain} probabilities: {chain_probs}")
@@ -156,9 +140,9 @@ class CurriculumEnvSampler(BaseEnvSampler):
                     print(f"[RewardSampler] Chain {chain} progressed from index {focus_on} -> index {new_focus} (reason: {reason})")
                     if new_focus < len(chain): 
                         print(f"[RewardSampler] New focus: {chain[new_focus]}")
-                        # Reset plateau tracking for new environment
+                        # Reset stuck tracking for new environment
                         new_env = chain[new_focus]
-                        self.plateau_episodes[new_env] = 0
+                        self.stuck_episodes[new_env] = 0
                     else: 
                         print(f"[RewardSampler] Chain {chain} completed!")
                 break
@@ -170,43 +154,32 @@ class CurriculumEnvSampler(BaseEnvSampler):
         self.total_reward[env_id] += avg_actor_reward
         self.num_episodes[env_id] += 1
 
-        # Update recent rewards for plateau detection
+        # Update recent rewards for stuck detection
         self.recent_rewards[env_id].append(avg_actor_reward)
-        # Keep only recent rewards (2x window size for better trend analysis)
-        if len(self.recent_rewards[env_id]) > self.plateau_window:
-            self.recent_rewards[env_id] = self.recent_rewards[env_id][-self.plateau_window:]
+        if len(self.recent_rewards[env_id]) > self.stuck_window:
+            self.recent_rewards[env_id] = self.recent_rewards[env_id][-self.stuck_window:]
 
         avg_reward = self.total_reward[env_id] / self.num_episodes[env_id]
         num_plays = self.num_episodes[env_id]
-
-        # Update plateau tracking
-        if self.plateau_patience is not None and len(self.recent_rewards[env_id]) >= self.plateau_window:
-            if self._is_reward_plateaued(env_id):
-                self.plateau_episodes[env_id] += 1
-            else:
-                self.plateau_episodes[env_id] = 0  # Reset if not plateaued
-
         print(f"[RewardSampler] Update for {env_id} → avg_reward={avg_reward:.3f}, episodes={num_plays}")
-        if self.plateau_patience is not None and len(self.recent_rewards[env_id]) >= self.plateau_window:
-            print(f"[RewardSampler] {env_id} plateau episodes: {self.plateau_episodes[env_id]}")
 
-        # Check if environment should progress
-        should_progress = False
-        reason = ""
+        # Update stuck tracking
+        if self.stuck_duration is not None and len(self.recent_rewards[env_id]) >= self.stuck_window:
+            if self._is_reward_stucked(env_id):
+                self.stuck_episodes[env_id] += 1
+            else:
+                self.stuck_episodes[env_id] = 0  # Reset if not stucked
+            print(f"[RewardSampler] {env_id} stuck episodes: {self.stuck_episodes[env_id]}")
         
-        # Original reward-based progression
+        # Checks if need progressing
         if avg_reward >= self.reward_threshold and num_plays >= self.episode_threshold:
-            should_progress = True
-            reason = "reward_threshold"
-        
-        # Plateau-based progression
-        elif (self.plateau_patience is not None and 
-              self.plateau_episodes[env_id] >= self.plateau_patience and 
-              env_id not in self.passed_envs):
-            should_progress = True
-            reason = "plateau"
-            self.plateau_progressed.add(env_id)
-            print(f"[RewardSampler] {env_id} progressed due to reward plateau after {self.plateau_episodes[env_id]} plateau episodes")
+            should_progress, reason = True, "reward_threshold"
+        elif (self.stuck_duration is not None and self.stuck_episodes[env_id] >= self.stuck_duration and num_plays >= self.episode_threshold and env_id not in self.passed_envs):
+            should_progress, reason = True, "stuck"
+            self.stuck_progressed.add(env_id)
+            print(f"[RewardSampler] {env_id} progressed due to reward stuck after {self.stuck_episodes[env_id]} stuck episodes")
+        else:
+            should_progress, reason = False, ""
 
         if should_progress and env_id not in self.passed_envs:
             self.passed_envs.add(env_id)
