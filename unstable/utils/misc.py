@@ -1,6 +1,13 @@
 import csv, json
-from unstable._types import GameInformation
+from unstable._types import GameInformation, PlayerTrajectory
 
+
+def write_collection_data_to_file(trajectory: PlayerTrajectory, env_id: str, filename: str):
+    with open(filename, "a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["env_id", "obs", "actions", "extracted_actions", "final_reward", "turn", "done"])
+        writer.writeheader()
+        for t in range(len(trajectory.obs)):
+            writer.writerow({"env_id": env_id, "obs": trajectory.obs[t], "actions": trajectory.actions[t], "extracted_actions": trajectory.extracted_actions[t], "final_reward": trajectory.final_reward, "turn": (t*2)+trajectory.pid, "done": t==len(trajectory.obs)-1})
 
 def write_training_data_to_file(batch, filename: str):
     with open(filename, mode='w', newline='', encoding='utf-8') as csvfile:

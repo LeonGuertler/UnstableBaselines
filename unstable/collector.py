@@ -1,4 +1,4 @@
-import re, random, logging, itertools
+import re, random, logging, itertools, os
 from pathlib import Path
 from dataclasses import asdict, dataclass, field
 from typing import Any, Callable, Dict, List, Tuple, Protocol, Optional
@@ -14,6 +14,8 @@ from unstable.actor import VLLMActor
 from unstable._types import GameSpec, GameInformation, PlayerTrajectory, TaskMeta
 from unstable.utils.logging import setup_logger
 from unstable.utils.templates import ACTION_EXTRACTION, OBSERVATION_FORMATTING
+from unstable.utils.misc import write_collection_data_to_file
+
 
 
 
@@ -70,6 +72,7 @@ class Collector:
         # self.actors = [VLLMActor.options(num_gpus=1).remote(cfg=vllm_config, tracker=tracker, name=f"Actor-{i}") for i in range(int(ray.available_resources().get("GPU", 0))-1)]
         self.actors = [VLLMActor.options(num_gpus=1).remote(cfg=vllm_config, tracker=tracker, name=f"Actor-{i}") for i in range(int(ray.available_resources().get("GPU", 0)))]
         self._actor_iter = itertools.cycle(self.actors)
+        self.local_storage_dir = ray.get(self.tracker.get_collection_dir.remote())
 
         # thead keeping
         self.flight: Dict[ray.ObjectRef, TaskMeta] = {}
@@ -104,7 +107,12 @@ class Collector:
         self._post_train(meta, game_information, player_trajs) if meta.type=="train" else self._post_eval(meta, game_information)
     
     def _post_train(self, meta: TaskMeta, game_information: GameInformation, player_trajs: List[PlayerTrajectory]):
-        for traj in player_trajs: self.buffer.add_player_trajectory.remote(traj, env_id=meta.env_id); self.tracker.add_player_trajectory.remote(traj, env_id=meta.env_id)
+        for traj in player_trajs: 
+            self.buffer.add_player_trajectory.remote(traj, env_id=meta.env_id)
+            self.tracker.add_player_trajectory.remote(traj, env_id=meta.env_id)
+            if len(traj.obs) > 0: 
+                checkpoint_name = os.path.basename(os.path.normpath(game_information.names[traj.pid])) if game_information.names[traj.pid] else 'None'
+                write_collection_data_to_file(traj, meta.env_id, f"{self.local_storage_dir}/{checkpoint_name}.csv")
         self.game_scheduler.update.remote(game_info=game_information)
 
     def _post_eval(self, meta: TaskMeta, game_information: GameInformation):

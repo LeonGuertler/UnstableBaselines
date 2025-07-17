@@ -15,12 +15,13 @@ class BaseTracker:
         self.output_dir = os.path.join("outputs", str(datetime.datetime.now().strftime('%Y-%m-%d')), str(datetime.datetime.now().strftime('%H-%M-%S')), self.run_name)
         os.makedirs(self.output_dir)
         self.output_dirs = {}
-        for folder_name in ["training_data", "eval_data", "checkpoints", "logs"]: 
+        for folder_name in ["training_data", "eval_data", "checkpoints", "logs", "collection"]: 
             self.output_dirs[folder_name] =  os.path.join(self.output_dir, folder_name); os.makedirs(self.output_dirs[folder_name], exist_ok=True)
 
     def get_checkpoints_dir(self):  return self.output_dirs["checkpoints"]
     def get_train_dir(self):        return self.output_dirs["training_data"]
     def get_eval_dir(self):         return self.output_dirs["eval_data"]
+    def get_collection_dir(self):   return self.output_dirs["collection"]
     def get_log_dir(self):          return self.output_dirs["logs"]
     def add_trajectory(self, trajectory: PlayerTrajectory, env_id: str): raise NotImplementedError
     def add_eval_episode(self, episode_info: Dict, final_reward: int, player_id: int, env_id: str, iteration: int): raise NotImplementedError
