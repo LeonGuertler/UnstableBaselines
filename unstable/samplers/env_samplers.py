@@ -1,4 +1,4 @@
-import random
+import random, math
 from typing import Protocol, List, Any, Dict
 from unstable._types import TrainEnvSpec, EvalEnvSpec, GameInformation
 
@@ -71,7 +71,7 @@ class CurriculumEnvSampler(BaseEnvSampler):
             else: probs[env_id] = self.base_prob_weight * (self.decay_factor ** (i - focus_on))
         return probs
     
-    def _get_sampling_probabilities(self) -> Dict[str, float]:
+    def _get_sampling_probs(self) -> Dict[str, float]:
         all_probs = {}
         chained_envs = set()
         for chain in self.env_chains: chain_probs = self._calculate_chain_probabilities(chain); all_probs.update(chain_probs); chained_envs.update(chain)
@@ -110,7 +110,7 @@ class CurriculumEnvSampler(BaseEnvSampler):
         if kind == "eval":
             return self._rng.choice(self._eval)
         
-        prob_dict = self._get_sampling_probabilities()
+        prob_dict = self._get_sampling_probs()
         if not prob_dict: 
             print("[RewardSampler] WARNING: No probabilities calculated, falling back to uniform sampling.")
             return self._rng.choice(list(self.env_id_to_spec.values()))
@@ -185,3 +185,111 @@ class CurriculumEnvSampler(BaseEnvSampler):
             self.passed_envs.add(env_id)
             print(f"[RewardSampler] {env_id} passed criteria! (reason: {reason})")
             self._update_chain_progression(env_id, reason)
+
+
+class SoftmaxCurriculumEnvSampler(BaseEnvSampler):
+    def __init__(self, train_env_specs: List[TrainEnvSpec], eval_env_specs: List[EvalEnvSpec] | None = None, rng_seed: int | None = 489,
+                 window_size: int = 50, min_episodes: int = 50, temperature: float = 0.1, smoothing_factor: float = 0.1):
+        super().__init__(train_env_specs, eval_env_specs, rng_seed)
+        self.env_id_to_spec = {env.env_id: env for env in train_env_specs}
+        self.env_chains = self._infer_env_chains_from_registry()
+        self.window_size = window_size
+        self.min_episodes = min_episodes
+        self.temperature = temperature
+        self.smoothing_factor = smoothing_factor
+        self.reward_history = {env.env_id: [] for env in train_env_specs}
+        self.num_episodes = {env.env_id: 0 for env in train_env_specs}
+
+    def _infer_env_chains_from_registry(self) -> list[tuple[str]]:
+        from collections import defaultdict
+        from textarena.envs import registration
+        allowed_env_ids = set(self.env_id_to_spec.keys())
+        chains = defaultdict(list)
+        for env_id in registration.ENV_REGISTRY.keys():
+            if env_id.endswith("-train") and env_id in allowed_env_ids:
+                prefix = "-".join(env_id.split("-")[:2])
+                chains[prefix].append(env_id)
+        return [tuple(chain) for chain in chains.values() if len(chain) > 1]
+
+    def _calculate_rate_of_change(self, env_id: str) -> float:
+        history = self.reward_history[env_id]
+        if len(history) < self.min_episodes: return 0.0
+        recent_rewards = history[-self.window_size:]
+        if len(recent_rewards) < 2: return 0.0
+        n = len(recent_rewards)
+        x_values = list(range(n))
+        x_mean = sum(x_values) / n
+        y_mean = sum(recent_rewards) / n
+        num = sum((x_values[i] - x_mean) * (recent_rewards[i] - y_mean) for i in range(n))
+        den = sum((x_values[i] - x_mean) ** 2 for i in range(n))
+        if abs(den) < 1e-8: return 0.0
+        slope = num / den
+        return slope / (1.0 + self.smoothing_factor)
+
+    def _softmax(self, values: List[float]) -> List[float]:
+        if not values: return []
+        scaled_values = [v / self.temperature for v in values]
+        max_val = max(scaled_values)
+        exp_values = [math.exp(v - max_val) for v in scaled_values]
+        sum_exp = sum(exp_values)
+        if sum_exp == 0: return [1.0 / len(values)] * len(values)
+        return [exp_val / sum_exp for exp_val in exp_values]
+
+    def _get_sampling_probs(self) -> Dict[str, float]:
+        all_probs = {}
+        for chain in self.env_chains:
+            rates_of_change = []
+            for env_id in chain:
+                rate = self._calculate_rate_of_change(env_id)
+                rates_of_change.append(rate)
+            chain_probs = self._softmax(rates_of_change)
+            for env_id, prob in zip(chain, chain_probs):
+                all_probs[env_id] = prob
+        total_prob = sum(all_probs.values())
+        if total_prob > 0: all_probs = {env_id: prob / total_prob for env_id, prob in all_probs.items()}
+        else: num_envs = len(all_probs); all_probs = {env_id: 1.0 / num_envs for env_id in all_probs.keys()}
+        return all_probs
+
+    def _log_current_state(self):
+        print(f"[SoftmaxCurriculumEnvSampler] Environment chains: {self.env_chains}")
+        for chain in self.env_chains:
+            print(f"[SoftmaxCurriculumEnvSampler] Chain {chain}:")
+            for env_id in chain:
+                rate = self._calculate_rate_of_change(env_id=env_id)
+                episodes = self.num_episodes[env_id]
+                recent_avg = 0.0
+                if self.reward_history[env_id]:
+                    recent_rewards = self.reward_history[env_id][-min(10, len(self.reward_history[env_id])):]
+                    recent_avg = sum(recent_rewards) / len(recent_rewards)
+                print(f"[SoftmaxCurriculumEnvSampler]   {env_id}: rate={rate:.4f}, episodes={episodes}, recent_avg_rewards={recent_avg:.3f}")
+        prob_dict = self._get_sampling_probs()
+        print(f"[SoftmaxCurriculumEnvSampler] Sampling probabilities: {prob_dict}")
+
+    def sample(self, kind: str = "train") -> TrainEnvSpec | EvalEnvSpec:
+        if kind == "eval": return self._rng.choice(self._eval)
+        prob_dict = self._get_sampling_probs()
+        if not prob_dict: 
+            print("[SoftmaxCurriculumEnvSampler] WARNING: No probabilities calculated, falling back to uniform sampling.")
+            return self._rng.choice(list(self.env_id_to_spec.values()))
+        env_ids = list(prob_dict.keys())
+        weights = list(prob_dict.values())
+        total_weight = sum(weights)
+        if total_weight <= 0:
+            print("[SoftmaxCurriculumEnvSampler] WARNING: Invalid weights, falling back to uniform sampling.")
+            weights = [1.0 / len(weights)] * len(weights)
+        
+        env_id = self._rng.choices(env_ids, weights=weights)[0]
+        print(f"[SoftmaxCurriculumEnvSampler] Sampled {env_id} with probability {prob_dict[env_id]:.3f}")
+        self._log_current_state()
+        
+        return self.env_id_to_spec[env_id]
+
+    def update(self, env_id: str, avg_actor_reward: float | None, avg_opponent_reward: float | None) -> None:
+        if avg_actor_reward is None: return
+        self.reward_history[env_id].append(avg_actor_reward)
+        self.num_episodes[env_id] += 1
+        # Keep only the most recent rewards within window
+        if len(self.reward_history[env_id]) > self.window_size: self.reward_history[env_id] = self.reward_history[env_id][-self.window_size:]
+        rate_of_change = self._calculate_rate_of_change(env_id)
+        print(f"[SoftmaxCurriculumEnvSampler] Update for {env_id} → reward={avg_actor_reward:.3f}, "
+              f"episodes={self.num_episodes[env_id]}, rate_of_change={rate_of_change:.4f}")
