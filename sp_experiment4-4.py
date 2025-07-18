@@ -19,7 +19,7 @@ vllm_config = {
 ray.init(namespace="unstable")  
 
 # initialize environment scheduler
-env_sampler = unstable.samplers.env_samplers.SoftmaxCurriculumEnvSampler(
+env_sampler = unstable.samplers.env_samplers.UniformRandomEnvSampler(
     train_env_specs=[
         unstable.TrainEnvSpec(env_id="TowerOfHanoi-v0-train",           num_players=1, num_actors=1, prompt_template="qwen3-sp"),
         unstable.TrainEnvSpec(env_id="TowerOfHanoi-v0-medium-train",    num_players=1, num_actors=1, prompt_template="qwen3-sp"),
