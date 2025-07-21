@@ -1,15 +1,17 @@
 import time, ray, unstable
 import unstable.reward_transformations as retra
 
+DEBUG = True
 # always uses 1 learner and the remainder of the GPUS as actors
 COLLECTION_WORKERS = 200
-EVALUATION_WORKERS = 16
+EVALUATION_WORKERS = 2
 ITERATIONS = 200
 MODEL_NAME = "Qwen/Qwen3-1.7B-Base"
-BATCH_SIZE = 384
+BATCH_SIZE = 2 if DEBUG else 384
 MINI_BATCH_SIZE = 1
-BUFFER_SIZE = 384*2
+BUFFER_SIZE = BATCH_SIZE*2
 LR = 1e-5
+CRITIC_LR = 2e-5
 GRAD_CLIP = 0.2
 MAX_TRAIN_SEQ_LEN = 3000
 MAX_GENERATION_LENGTH = 4096 
@@ -30,16 +32,17 @@ ray.init(namespace="unstable")
 # initialize environment scheduler
 env_sampler = unstable.samplers.env_samplers.UniformRandomEnvSampler(
     train_env_specs=[
-        unstable.TrainEnvSpec(env_id="SimpleTak-v0-train", num_players=2, num_actors=2, prompt_template="qwen3-zs"),
+        unstable.TrainEnvSpec(env_id="PigDice-v0-short-train", num_players=2, num_actors=2, prompt_template="qwen3-zs"),
     ],
     eval_env_specs=[
+        unstable.EvalEnvSpec(env_id="PigDice-v0-short-train", num_players=2, prompt_template="qwen3-zs"),
         unstable.EvalEnvSpec(env_id="SimpleTak-v0-train", num_players=2, prompt_template="qwen3-zs"),
         unstable.EvalEnvSpec(env_id="KuhnPoker-v0-train", num_players=2, prompt_template="qwen3-zs"),
 ])
 
 # Tracker
 tracker = unstable.Tracker.options(name="Tracker").remote(
-    run_name=f"Test-{MODEL_NAME.split('/')[-1]}-{env_sampler.env_list()}-{int(time.time())}", 
+    run_name=f"Test-A2C-NoFormat-NoRae-Debug_{DEBUG}-{MODEL_NAME.split('/')[-1]}-{env_sampler.env_list()}-{int(time.time())}", 
     wandb_project="UnstableBaselines"
 ) 
 
@@ -57,8 +60,9 @@ game_scheduler = unstable.GameScheduler.options(name="GameScheduler").remote(mod
 # Data Buffer
 step_buffer = unstable.EpisodeBuffer.options(name="Buffer").remote(
     max_buffer_size=BUFFER_SIZE, tracker=tracker,
-    final_reward_transformation=retra.ComposeFinalRewardTransforms([retra.RoleAdvantageByEnvFormatter()]),
-    step_reward_transformation=retra.ComposeStepRewardTransforms([retra.RewardForFormat(1.5), retra.PenaltyForInvalidMove(1.0, -1.0)]),
+    # final_reward_transformation=retra.ComposeFinalRewardTransforms([retra.RoleAdvantageByEnvFormatter()]),
+    final_reward_transformation=None,
+    step_reward_transformation=retra.ComposeStepRewardTransforms([retra.RewardForFormat(0), retra.PenaltyForInvalidMove(0, 0)]),
     sampling_reward_transformation=retra.ComposeSamplingRewardTransforms([retra.NormalizeRewardsByEnv(True)]),
 )
 
@@ -82,7 +86,7 @@ learner = unstable.A2CLearner.options(num_gpus=1, name="Learner").remote(
     gradient_checkpointing=True,
     use_trainer_cache=False
 )
-ray.get(learner.initialize_algorithm.remote(infer_mini_batch_size=32, critic_learning_rate=5e-5, normalize_adv=True, max_train_len=MAX_TRAIN_SEQ_LEN, max_generation_len=MAX_GENERATION_LENGTH))
+ray.get(learner.initialize_algorithm.remote(infer_mini_batch_size=32, critic_learning_rate=CRITIC_LR, normalize_adv=True, max_train_len=MAX_TRAIN_SEQ_LEN, max_generation_len=MAX_GENERATION_LENGTH,))
 
 
 try:

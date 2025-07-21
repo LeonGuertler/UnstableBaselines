@@ -102,7 +102,7 @@ class EpisodeBuffer(BaseBuffer):
         reward = self.final_reward_transformation(reward=player_traj.final_reward, pid=player_traj.pid, env_id=env_id) if self.final_reward_transformation else player_traj.final_reward
         for idx in range(len(player_traj.obs)):
             step_reward = self.step_reward_transformation(player_traj=player_traj, step_index=idx, reward=reward) if self.step_reward_transformation else reward
-            episode.append(Step(pid=player_traj.pid, obs=player_traj.obs[idx], act=player_traj.actions[idx], reward=step_reward, env_id=env_id, step_info={"raw_reward": player_traj.final_reward, "env_reward": reward, "step_reward": step_reward}))
+            episode.append(Step(pid=player_traj.pid, obs=player_traj.obs[idx], act=player_traj.actions[idx], reward=step_reward, env_id=env_id, step_info={"raw_reward": player_traj.final_reward, "env_reward": reward, "step_reward": step_reward, "format_feedbacks": player_traj.format_feedbacks[idx]}))
         with self.mutex:
             self.episodes.append(episode)
             excess_num_samples = max(0, len(tree.flatten(self.episodes)) - self.max_buffer_size)

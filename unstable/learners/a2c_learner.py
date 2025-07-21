@@ -99,9 +99,17 @@ class A2CLearner(BaseLearner):
             ep_returns.append(adv + values)
 
         train_batch = []
+        print("batch len", len(batch))
         for i, ep in enumerate(batch):
+            print("ep len", len(ep))
             for j, step in enumerate(ep):
-                step = replace(step, reward=ep_advantages[i][j].item())
+                adv = ep_advantages[i][j].item()
+                print("here")
+                # adv += 1 if step.step_info["correct_answer_format"] else 0
+                print("here2")
+                # adv += -1 if step.step_info["invalid_move"] else 1
+                print("here3")
+                step = replace(step, reward=adv)
                 step = replace(step, step_info={**step.step_info, "return": ep_returns[i][j].item(), "advantage": ep_advantages[i][j].item()})
                 train_batch.append(step)
         assert len(train_batch) >= self.batch_size
