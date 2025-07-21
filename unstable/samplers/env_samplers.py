@@ -20,17 +20,14 @@ class UniformRandomEnvSampler(BaseEnvSampler):
 
 class CurriculumEnvSampler(BaseEnvSampler):
     def __init__(self, train_env_specs: List[TrainEnvSpec], eval_env_specs: List[EvalEnvSpec] | None = None, rng_seed: int | None = 489,
-                 window_size: int = 50, min_episodes: int = 0, temperature: float = 0.03, smoothing_factor: float = 0.01,
-                 forward_boost_factor: float = 3.0, decay_factor: float = 0.4):
+                 window_size: int = 50, min_episodes: int = 0, temperature: float = 0.03, forward_boost_factor: float = 3.0):
         super().__init__(train_env_specs, eval_env_specs, rng_seed)
         self.env_id_to_spec = {env.env_id: env for env in train_env_specs}
         self.env_chains = self._infer_env_chains_from_registry()
         self.window_size = window_size
         self.min_episodes = min_episodes
         self.temperature = temperature
-        self.smoothing_factor = smoothing_factor
         self.forward_boost_factor = forward_boost_factor
-        self.decay_factor = decay_factor
         
         self.reward_history = {env.env_id: [] for env in train_env_specs}
         self.num_episodes = {env.env_id: 0 for env in train_env_specs}
@@ -61,7 +58,7 @@ class CurriculumEnvSampler(BaseEnvSampler):
         den = sum((x_values[i] - x_mean) ** 2 for i in range(n))
         if abs(den) < 1e-8: return 0.0
         slope = num / den
-        return slope / (1.0 + self.smoothing_factor)
+        return slope / (1.0 + 0.01) # smoothiing factor of 0.01
 
     def _update_chain_progress(self):
         for chain in self.env_chains:
@@ -96,20 +93,20 @@ class CurriculumEnvSampler(BaseEnvSampler):
             # Positive rate: boost harder environments proportionally to the rate
             for i in range(focus_env_idx + 1, len(chain)):
                 distance = i - focus_env_idx
-                boost = self.forward_boost_factor * focus_rate * (self.decay_factor ** (distance - 1))
+                boost = self.forward_boost_factor * focus_rate * (0.5 ** (distance - 1))
                 scores[chain[i]] += boost
             
             # Slightly reduce score of easier environments
             for i in range(focus_env_idx):
                 distance = focus_env_idx - i
-                reduction = 0.5 * focus_rate * (self.decay_factor ** (distance - 1))
+                reduction = 0.5 * focus_rate * (0.5 ** (distance - 1))
                 scores[chain[i]] -= reduction
         
         elif focus_rate <= 0:
             # Negative rate: boost easier environments proportionally to the absolute rate
             for i in range(focus_env_idx):
                 distance = focus_env_idx - i
-                boost = self.forward_boost_factor * abs(focus_rate) * (self.decay_factor ** (distance - 1))
+                boost = self.forward_boost_factor * abs(focus_rate) * (0.5 ** (distance - 1))
                 scores[chain[i]] += boost
             
             # Give current environment some boost too (recovery)
@@ -118,7 +115,7 @@ class CurriculumEnvSampler(BaseEnvSampler):
             # Reduce score of harder environments
             for i in range(focus_env_idx + 1, len(chain)):
                 distance = i - focus_env_idx
-                reduction = abs(focus_rate) * self.forward_boost_factor * (self.decay_factor ** (distance - 1))
+                reduction = abs(focus_rate) * self.forward_boost_factor * (0.5 ** (distance - 1))
                 scores[chain[i]] -= reduction
         
         # If rate is near zero, scores remain mostly at base values (neutral state)
