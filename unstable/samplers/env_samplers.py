@@ -20,19 +20,17 @@ class UniformRandomEnvSampler(BaseEnvSampler):
 
 class CurriculumEnvSampler(BaseEnvSampler):
     def __init__(self, train_env_specs: List[TrainEnvSpec], eval_env_specs: List[EvalEnvSpec] | None = None, rng_seed: int | None = 489,
-                 window_size: int = 50, min_episodes: int = 0, temperature: float = 0.03, forward_boost_factor: float = 3.0):
+                 window_size: int = 50, min_episodes: int = 0, temperature: float = 0.03, exploration_factor: float = 3.0):
         super().__init__(train_env_specs, eval_env_specs, rng_seed)
         self.env_id_to_spec = {env.env_id: env for env in train_env_specs}
         self.env_chains = self._infer_env_chains_from_registry()
+        self.chain_progress = {chain: 0 for chain in self.env_chains}
+        self.reward_history = {env.env_id: [] for env in train_env_specs}
+        self.num_episodes = {env.env_id: 0 for env in train_env_specs}
         self.window_size = window_size
         self.min_episodes = min_episodes
         self.temperature = temperature
-        self.forward_boost_factor = forward_boost_factor
-        
-        self.reward_history = {env.env_id: [] for env in train_env_specs}
-        self.num_episodes = {env.env_id: 0 for env in train_env_specs}
-        
-        self.chain_progress = {chain: 0 for chain in self.env_chains}
+        self.exploration_factor = exploration_factor
 
     def _infer_env_chains_from_registry(self) -> list[tuple[str]]:
         from collections import defaultdict
@@ -62,13 +60,11 @@ class CurriculumEnvSampler(BaseEnvSampler):
 
     def _update_chain_progress(self):
         for chain in self.env_chains:
-            max_rate = -float('inf')
-            best_idx = -1
+            best_idx, max_rate = -1, -float('inf')
             for i, env_id in enumerate(chain):
                 rate = self._calculate_rate_of_change(env_id)
                 if rate > max_rate:
-                    max_rate = rate
-                    best_idx = i
+                    best_idx, max_rate = i, rate
             if best_idx >= 0:
                 self.chain_progress[chain] = best_idx
 
@@ -81,9 +77,8 @@ class CurriculumEnvSampler(BaseEnvSampler):
         if sum_exp == 0: return [1.0 / len(values)] * len(values)
         return [exp_val / sum_exp for exp_val in exp_values]
 
-    def _calculate_forward_looking_scores(self, chain: tuple) -> Dict[str, float]:
-        """Calculate raw scores for environments based on forward-looking curriculum logic."""
-        focus_env_idx = self.chain_progress[chain] # for the chain, get the current 'focus' index that had the best rate of change.
+    def _calculate_exploration_scores(self, chain: tuple) -> Dict[str, float]:
+        focus_env_idx = self.chain_progress[chain]
         focus_env_id = chain[focus_env_idx]
         focus_rate = self._calculate_rate_of_change(focus_env_id)
         scores = {}
@@ -93,7 +88,7 @@ class CurriculumEnvSampler(BaseEnvSampler):
             # Positive rate: boost harder environments proportionally to the rate
             for i in range(focus_env_idx + 1, len(chain)):
                 distance = i - focus_env_idx
-                boost = self.forward_boost_factor * focus_rate * (0.5 ** (distance - 1))
+                boost = self.exploration_factor * focus_rate * (0.5 ** (distance - 1))
                 scores[chain[i]] += boost
             
             # Slightly reduce score of easier environments
@@ -106,7 +101,7 @@ class CurriculumEnvSampler(BaseEnvSampler):
             # Negative rate: boost easier environments proportionally to the absolute rate
             for i in range(focus_env_idx):
                 distance = focus_env_idx - i
-                boost = self.forward_boost_factor * abs(focus_rate) * (0.5 ** (distance - 1))
+                boost = self.exploration_factor * abs(focus_rate) * (0.5 ** (distance - 1))
                 scores[chain[i]] += boost
             
             # Give current environment some boost too (recovery)
@@ -115,11 +110,9 @@ class CurriculumEnvSampler(BaseEnvSampler):
             # Reduce score of harder environments
             for i in range(focus_env_idx + 1, len(chain)):
                 distance = i - focus_env_idx
-                reduction = abs(focus_rate) * self.forward_boost_factor * (0.5 ** (distance - 1))
+                reduction = self.exploration_factor * abs(focus_rate) * (0.5 ** (distance - 1))
                 scores[chain[i]] -= reduction
-        
-        # If rate is near zero, scores remain mostly at base values (neutral state)
-        
+                
         return scores
 
     def _get_sampling_probs(self) -> Dict[str, float]:
@@ -129,7 +122,7 @@ class CurriculumEnvSampler(BaseEnvSampler):
         chain_probs = self._softmax(chain_scores)
         env_probs = {}
         for chain, p_chain in zip(self.env_chains, chain_probs):
-            depth_scores = self._calculate_forward_looking_scores(chain)
+            depth_scores = self._calculate_exploration_scores(chain)
             depth_vals = [depth_scores[eid] for eid in chain]
             depth_probs = self._softmax(depth_vals)
             for eid, p_env in zip(chain, depth_probs):
@@ -139,13 +132,13 @@ class CurriculumEnvSampler(BaseEnvSampler):
         return {eid: p / total for eid, p in env_probs.items()}
 
     def _log_current_state(self):
-        print(f"[ExplorativeCurriculumEnvSampler] Environment chains: {self.env_chains}")
-        print(f"[ExplorativeCurriculumEnvSampler] Chain progress: {self.chain_progress}")
+        print(f"[CurriculumEnvSampler] Environment chains: {self.env_chains}")
+        print(f"[CurriculumEnvSampler] Chain progress: {self.chain_progress}")
         
         for chain in self.env_chains:
-            print(f"[ExplorativeCurriculumEnvSampler] Chain {chain}:")
+            print(f"[CurriculumEnvSampler] Chain {chain}:")
             focus_idx = self.chain_progress[chain]
-            chain_scores = self._calculate_forward_looking_scores(chain)
+            chain_scores = self._calculate_exploration_scores(chain)
             chain_score_values = [chain_scores[env_id] for env_id in chain]
             chain_probs = self._softmax(chain_score_values)
             
@@ -164,19 +157,19 @@ class CurriculumEnvSampler(BaseEnvSampler):
                     elif rate <= 0:
                         status = f"FOCUS (NO GROWTH {rate:.4f})"
                 
-                print(f"[ExplorativeCurriculumEnvSampler]   {env_id}: rate={rate:.4f}, episodes={episodes}, "
+                print(f"[CurriculumEnvSampler]   {env_id}: rate={rate:.4f}, episodes={episodes}, "
                       f"recent_avg_rewards={recent_avg:.3f}, chain_prob={chain_probs[i]:.3f}, score={chain_scores[env_id]:.3f} {status}")
         
         prob_dict = self._get_sampling_probs()
-        print(f"[ExplorativeCurriculumEnvSampler] Final sampling probabilities (softmax within chains, normalized): {prob_dict}")
+        print(f"[CurriculumEnvSampler] Final sampling probabilities (softmax within chains, normalized): {prob_dict}")
 
-    def sample(self, kind: str = "train") -> TrainEnvSpec | EvalEnvSpec:
+    def sample(self, kind: str = "train", verbose: bool = False) -> TrainEnvSpec | EvalEnvSpec:
         if kind == "eval":
             return self._rng.choice(self._eval)
         
         prob_dict = self._get_sampling_probs()
         if not prob_dict:
-            print("[ExplorativeCurriculumEnvSampler] WARNING: No probabilities calculated, falling back to uniform sampling.")
+            print("[CurriculumEnvSampler] WARNING: No probabilities calculated, falling back to uniform sampling.")
             return self._rng.choice(list(self.env_id_to_spec.values()))
         
         env_ids = list(prob_dict.keys())
@@ -184,12 +177,12 @@ class CurriculumEnvSampler(BaseEnvSampler):
         total_weight = sum(weights)
         
         if total_weight <= 0:
-            print("[ExplorativeCurriculumEnvSampler] WARNING: Invalid weights, falling back to uniform sampling.")
+            print("[CurriculumEnvSampler] WARNING: Invalid weights, falling back to uniform sampling.")
             weights = [1.0 / len(weights)] * len(weights)
         
         env_id = self._rng.choices(env_ids, weights=weights)[0]
-        print(f"[ExplorativeCurriculumEnvSampler] Sampled {env_id} with probability {prob_dict[env_id]:.3f}")
-        self._log_current_state()
+        print(f"[CurriculumEnvSampler] Sampled {env_id} with probability {prob_dict[env_id]:.3f}")
+        if verbose: self._log_current_state()
         
         return self.env_id_to_spec[env_id]
 
@@ -199,5 +192,5 @@ class CurriculumEnvSampler(BaseEnvSampler):
         self.num_episodes[env_id] += 1
         if len(self.reward_history[env_id]) > self.window_size: self.reward_history[env_id] = self.reward_history[env_id][-self.window_size:] 
         rate_of_change = self._calculate_rate_of_change(env_id)
-        print(f"[ExplorativeCurriculumEnvSampler] Update for {env_id} → reward={avg_actor_reward:.3f}, "
+        print(f"[CurriculumEnvSampler] Update for {env_id} → reward={avg_actor_reward:.3f}, "
               f"episodes={self.num_episodes[env_id]}, rate_of_change={rate_of_change:.4f}")
