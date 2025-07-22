@@ -61,7 +61,7 @@ class PPOLearner(BaseLearner):
         state_enc = self.tokenizer(obs, return_tensors="pt", padding=True, truncation=True, max_length=self.max_train_len).to(self.device)
         return enc, state_enc, old_logps, advs, rets, obs, avg_len, pct_truncated
 
-    def _logp(self, enc, obs):
+    def _forward_minibatch(self, enc, obs):
         out = self.policy_model(**enc)
         logits = out.logits
         logp = F.log_softmax(logits, dim=-1)
@@ -76,7 +76,7 @@ class PPOLearner(BaseLearner):
 
     def _mini_batch_update_step(self, steps: List) -> Dict[str, float]:
         enc, state_enc, old_logps, advs, rets, obs, avg_len, pct_truncated = self._prepare_batch(steps)
-        seq_logp, entropy, _ = self._logp(enc, obs)
+        seq_logp, entropy, _ = self._forward_minibatch(enc, obs)
 
         ratio = torch.exp(seq_logp - old_logps)
         surr1 = ratio * advs
@@ -104,7 +104,7 @@ class PPOLearner(BaseLearner):
             enc, state_enc, _, _, _, obs, _, _ = self._prepare_batch(sub)
             with torch.no_grad():
                 old_values.append(self.critic(**state_enc)[:, 0].cpu())
-                seq_logp, _, _ = self._logp(enc, obs)
+                seq_logp, _, _ = self._forward_minibatch(enc, obs)
                 old_logps.append(seq_logp.cpu())
         old_values = torch.cat(old_values)
         old_logps = torch.cat(old_logps)
