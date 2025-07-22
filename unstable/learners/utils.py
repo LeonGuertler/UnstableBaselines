@@ -7,6 +7,21 @@ try:                from torch.utils.checkpoint import CheckpointImpl
 except ImportError: from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import CheckpointImpl
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import checkpoint_wrapper, apply_activation_checkpointing
 
+def compute_gae(rewards, values, gamma=1.0, gae_lambda=1.0):
+    assert len(rewards) == len(values)
+    advantages = torch.zeros_like(rewards)
+    lastgaelam = 0
+    for t in reversed(range(len(rewards))):
+        if t == len(rewards) - 1:
+            nextnonterminal = 0  # Assume a complete episode
+            nextvalues = 0  # Does not matter
+        else:
+            nextnonterminal = 1.0
+            nextvalues = values[t + 1]
+        delta = rewards[t] + gamma * nextvalues * nextnonterminal - values[t]
+        advantages[t] = lastgaelam = delta + gamma * gae_lambda * nextnonterminal * lastgaelam
+    return advantages
+
 def build_critic_cls(base_cls, base_pretrain_cls, value_head_prefix):
     class CriticModel(base_pretrain_cls):
         supports_gradient_checkpointing = True

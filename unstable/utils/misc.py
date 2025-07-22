@@ -1,11 +1,12 @@
-import csv, json
+import csv, json, os
 from unstable._types import GameInformation, PlayerTrajectory
 
 
 def write_collection_data_to_file(trajectory: PlayerTrajectory, env_id: str, filename: str):
+    already_exists = os.path.exists(filename)
     with open(filename, "a", newline="", encoding="utf-8") as f:
         writer = csv.DictWriter(f, fieldnames=["env_id", "obs", "actions", "extracted_actions", "final_reward", "turn", "done"])
-        writer.writeheader()
+        if not already_exists: writer.writeheader()
         for t in range(len(trajectory.obs)):
             writer.writerow({"env_id": env_id, "obs": trajectory.obs[t], "actions": trajectory.actions[t], "extracted_actions": trajectory.extracted_actions[t], "final_reward": trajectory.final_reward, "turn": (t*2)+trajectory.pid, "done": t==len(trajectory.obs)-1})
 

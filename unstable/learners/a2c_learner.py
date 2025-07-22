@@ -1,24 +1,10 @@
 import ray, torch, tree, random
-from typing import Optional
+from typing import Optional, Dict
 from dataclasses import replace
 from unstable.learners.base import BaseLearner
-from unstable.learners.utils import build_peft_model, enable_full_activation_ckpt
+from unstable.learners.utils import build_peft_model, enable_full_activation_ckpt, compute_gae
 from unstable.reward_transformations.transformation_sampling import NormalizeRewardsByEnv
 
-def compute_gae(rewards, values, gamma=1.0, gae_lambda=1.0): # Compute gae (for policy learning) and return (for critic learning)
-    assert len(rewards) == len(values)
-    advantages = torch.zeros_like(rewards)
-    lastgaelam = 0
-    for t in reversed(range(len(rewards))):
-        if t == len(rewards) - 1:
-            nextnonterminal = 0  # Assume a complete episode
-            nextvalues = 0  # Does not matter
-        else:
-            nextnonterminal = 1.0
-            nextvalues = values[t + 1]
-        delta = rewards[t] + gamma * nextvalues * nextnonterminal - values[t]
-        advantages[t] = lastgaelam = delta + gamma * gae_lambda * nextnonterminal * lastgaelam
-    return advantages
 
 @ray.remote
 class A2CLearner(BaseLearner):
@@ -52,6 +38,7 @@ class A2CLearner(BaseLearner):
         # Learn policy
         out = self.policy_model(**enc)
         logp = torch.nn.functional.log_softmax(out.logits, dim=-1)
+        print(logp.shape)
         tgt_ids = enc.input_ids[:, 1:]
         tok_logp = logp[:, :-1, :].gather(-1, tgt_ids.unsqueeze(-1)).squeeze(-1)
         mask = torch.ones_like(enc.input_ids, dtype=torch.bool, device=self.device)  # build prompt mask
@@ -117,6 +104,7 @@ class A2CLearner(BaseLearner):
 
         if self.normalize_adv: train_batch = NormalizeRewardsByEnv(True)(train_batch)
         for i in range(num_steps):
+            print('MINIBATCH', i)
             sub = train_batch[i * self.mini_batch_size : (i + 1) * self.mini_batch_size]
             with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16):
                 update_metrics = self._mini_batch_update_step(sub, scaling=num_steps)
@@ -143,11 +131,3 @@ class A2CLearner(BaseLearner):
             "grad_norm": grad_norm, "critic_lr": self.critic_optimizer.param_groups[0]["lr"], "critic_grad_norm": critic_grad_norm,
         })
         return log
-
-
-
-
-
-
-
-

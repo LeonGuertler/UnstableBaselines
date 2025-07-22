@@ -1,7 +1,7 @@
 from unstable.collector import Collector 
 from unstable.buffers import StepBuffer, EpisodeBuffer
 from unstable.trackers import Tracker
-from unstable.learners import REINFORCELearner, A2CLearner
+from unstable.learners import REINFORCELearner, A2CLearner, PPOLearner
 from unstable.terminal_interface import TerminalInterface
 from unstable.model_registry import ModelRegistry
 from unstable.game_scheduler import GameScheduler
