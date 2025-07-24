@@ -11,13 +11,13 @@ from unstable.utils.logging import setup_logger
 
 @ray.remote
 class VLLMActor:
-    def __init__(self, cfg: Dict[str, Any], tracker, name: str):
+    def __init__(self, cfg: Dict[str, Any], tracker, name: str, use_lora: bool=True):
         self.logger = setup_logger(f"actor-{name}", ray.get(tracker.get_log_dir.remote())) # set up logging
         self.gpu_ids = ray.get_gpu_ids()
         os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, self.gpu_ids))
         
         engine_args = EngineArgs(
-            model=cfg["model_name"], enable_lora=True, max_loras=cfg["max_loras"], max_lora_rank=cfg["lora_config"]["lora_rank"], 
+            model=cfg["model_name"], enable_lora=use_lora, max_loras=cfg["max_loras"], max_lora_rank=cfg["lora_config"]["lora_rank"], 
             max_cpu_loras=cfg["max_loras"], max_num_seqs=cfg["max_parallel_seq"], task="generate", max_model_len=cfg["max_model_len"],
             disable_custom_all_reduce=True, enforce_eager=False, disable_log_stats=True,  # Reduce logging overhead
         )
@@ -128,3 +128,4 @@ class VLLMActor:
         while self._tok_hist and now - self._tok_hist[0] > window:
             self._tok_hist.popleft()
         return len(self._tok_hist) / window
+

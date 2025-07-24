@@ -1,5 +1,7 @@
-import re, random, logging, itertools
+import os, re, csv, random, logging, itertools
 from pathlib import Path
+from collections import deque
+import numpy as np
 from dataclasses import asdict, dataclass, field
 from typing import Any, Callable, Dict, List, Tuple, Protocol, Optional
 
@@ -11,7 +13,7 @@ assert ta.__version__ >= "0.6.16", f"TextArena package version is too old: {ta._
 
 # local imports
 from unstable.actor import VLLMActor
-from unstable._types import GameSpec, GameInformation, PlayerTrajectory, TaskMeta
+from unstable._types import GameSpec, AgentSpec, GameInformation, PlayerTrajectory, TaskMeta
 from unstable.utils.logging import setup_logger
 from unstable.utils.templates import ACTION_EXTRACTION, OBSERVATION_FORMATTING
 
@@ -118,3 +120,93 @@ class Collector:
             if not self.flight: continue
             done_ref, _ = ray.wait(list(self.flight), num_returns=1)
             self._handle_finished_job(done_ref[0])
+
+
+
+@ray.remote
+class Evaluator:
+    def __init__(self, vllm_config, tracker, eval_env_specs, num_runs_per_env):
+        try:
+            self.logger = setup_logger("evaluator", ray.get(tracker.get_log_dir.remote()))
+            self.tracker, self.eval_env_specs, self.num_runs_per_env = tracker, eval_env_specs, num_runs_per_env
+            self.actors = [VLLMActor.options(num_gpus=1).remote(cfg=vllm_config, tracker=tracker, name=f"Actor-{i}", use_lora=False) for i in range(int(ray.available_resources().get("GPU", 0)))]
+            self._actor_iter = itertools.cycle(self.actors)
+            self._games_to_run = deque()
+            # populate all games to be run
+            for game_idx in range(num_runs_per_env*len(eval_env_specs)):
+                _env_spec = eval_env_specs[game_idx%len(eval_env_specs)]
+                pids = list(range(_env_spec.num_players)); random.shuffle(pids); agent_specs = []
+                for i, pid in enumerate(pids):
+                    if i == 0:  agent_specs.append(AgentSpec(pid=pid, kind="checkpoint", collect_data=False, lora_path=None, prompt_template=_env_spec.prompt_template, action_extraction_fn=_env_spec.action_extraction_fn)) # only one actor, rest fixed
+                    else:       agent_specs.append(AgentSpec(pid=pid, kind="openrouter", lora_path=None, openrouter_name=_env_spec.fixed_opponent)) # sample opponent and add
+                self._games_to_run.append(GameSpec(game_idx=game_idx, env_id=_env_spec.env_id, seed=game_idx, agent_specs=agent_specs, eval_model_pid=pids[0], eval_opponent_name=_env_spec.fixed_opponent)) # populate GameSpec
+
+            self.logger.info(self._games_to_run)
+            # thead keeping
+            self.flight: Dict[ray.ObjectRef, TaskMeta] = {}
+            self._num_running = lambda typ: sum(meta.type == typ for meta in self.flight.values())
+            
+            self.csv_path = os.path.join(ray.get(self.tracker.get_eval_dir.remote()), "eval_results.csv") # TODO change at some point
+            self.logger.info(f"csv_path: {self.csv_path}")
+            self.csv_fields = ["game_idx", "env_id", "eval_model_pid", "eval_model_reward", "avg_opponent_reward", "num_turns"]
+            # if not self.csv_path.exists():
+            if not os.path.exists(self.csv_path):
+                # with self.csv_path.open("w", newline="") as f:
+                with open(self.csv_path, "a", newline="") as f:
+                    writer = csv.DictWriter(f, fieldnames=self.csv_fields)
+                    writer.writeheader()
+            self.logger.info("Evaluator initialized")
+        except Exception as exc: self.logger.info(f"Exception in evaluator setup: {exc}")
+
+
+    def _launch_jobs(self, max_eval: int):
+        try:
+            while self._num_running("eval") < max_eval and self._games_to_run:
+                try:
+                    game_spec = self._games_to_run.popleft()
+                    self.logger.info(f"received eval game_spec: {game_spec}")
+                    actor: VLLMActor = next(self._actor_iter)
+                    ref = run_game.remote(game_spec, actor)
+                    self.flight[ref] = TaskMeta("eval", game_spec.env_id)
+                except Exception as exc:
+                    self.logger.info(f"Exception in eval game {game_spec}: {exc}")
+        except Exception as exc: self.logger.info(f"Exception in _launch_jobs: {exc}")
+
+    def _handle_finished_job(self, ref):
+        try:
+            meta = self.flight.pop(ref)
+            try: game_information, player_trajs = ray.get(ref)
+            except (RayTaskError, RayActorError) as err: self.logger.error(f"Remote episode failed for {meta.type} task: env={meta.env_id}: {err}", exc_info=True); return
+            self._post_eval(meta, game_information)
+        except Exception as exc: self.logger.info(f"Exception in _handle_finished_job: {exc}")
+    
+
+    def _post_eval(self, meta: TaskMeta, gi: "GameInformation"):
+        try:
+            rewards = gi.final_rewards
+            eval_reward = rewards.get(gi.eval_model_pid, float("nan"))
+            opp_rewards = [r for pid, r in rewards.items() if pid != gi.eval_model_pid]
+            avg_opp_reward = float(np.mean(opp_rewards)) if opp_rewards else float("nan")
+            num_turns = getattr(gi, "num_turns", -1)
+            row = {"game_idx": gi.game_idx, "env_id": meta.env_id, "eval_model_pid": gi.eval_model_pid, "eval_model_reward": eval_reward, "avg_opponent_reward": avg_opp_reward, "num_turns": num_turns}
+            # with self.csv_path.open("a", newline="") as f:
+            with open(self.csv_path, "a", newline="") as f:
+                writer = csv.DictWriter(f, fieldnames=self.csv_fields)
+                writer.writerow(row)
+                f.flush()
+            self.logger.info("[EVAL] game=%d env=%s pid=%d -> eval=%.4f opp=%.4f T=%d", row["game_idx"], row["env_id"], row["eval_model_pid"], row["eval_model_reward"], row["avg_opponent_reward"], row["num_turns"])
+        except Exception as exc: self.logger.info(f"Exception in _post_eval: {exc}")
+
+    def evaluate(self, num_eval_workers: int):
+        self.logger.info("entered collect func")
+        try:
+            # while self._games_to_run:
+            while self._games_to_run or self.flight:
+                self.logger.info("entered colelct loop")
+                self._launch_jobs(num_eval_workers)
+                if not self.flight: time.sleep(0.01); continue
+                done_ref, _ = ray.wait(list(self.flight), num_returns=1)
+                self._handle_finished_job(done_ref[0])
+            return None # for ray.get # presumeably, not actually sure whether this is necessary
+        except Exception as exc: self.logger.info(f"Exception in evaluate(): {exc}")
+

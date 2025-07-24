@@ -22,9 +22,15 @@ class _UBRun:
         finally:
             ray.kill(collector, no_restart=True); ray.shutdown()
 
+class _UBEval:
+    def __init__(self, *, evaluator): self.evaluator = evaluator
+    def evaluate(self, num_eval_workers: int=16):
+        try: ray.get(self.evaluator.evaluate.remote(num_eval_workers=num_eval_workers))
+        # try: self.evaluator.evaluate.remote(num_eval_workers=num_eval_workers)
+        finally: ray.kill(self.evaluator, no_restart=True); ray.shutdown()
+
 def build(*, model_name: str, train_envs: Sequence[unstable.TrainEnvSpec], eval_envs: Optional[Sequence[unstable.EvalEnvSpec]]=None, env_sampling_strategy: str = "random", opponent_sampling_strategy: str = "none", fixed_opponents: Sequence[str] = ["google/gemini-2.0-flash-lite-001"], algorithm: str = "reinforce", max_train_len: Optional[int]=None, max_generation_len: int=4096, batch_size: int=384, mini_batch_size: int=1, learning_rate: float=1e-5, gradient_clipping: float=0.2, activation_checkpointing: bool=True, gradient_checkpointing: bool=True, use_trainer_cache: bool = False, buffer_size: Optional[int]=None, lora_config: Optional[dict]=None, vllm_config: Optional[dict]=None, wandb_project: str="UnstableBaselines"):
-    # Ray init
-    ray.init(namespace="unstable")  
+    ray.init(namespace="unstable") # Ray init
     
     # env sampler
     assert env_sampling_strategy in _ENV_SAMPLERS, f"env_sampling_strategy='{env_sampling_strategy}' not found. Please use one of: {list(_ENV_SAMPLERS.keys())}"
@@ -64,3 +70,16 @@ def build(*, model_name: str, train_envs: Sequence[unstable.TrainEnvSpec], eval_
         case _:             ray.get(learner.initialize_algorithm.remote())
 
     return _UBRun(collector=collector, learner=learner)
+
+
+def build_evaluator(*, model_name: str, eval_envs: Sequence[unstable.EvalEnvSpec], max_generation_len: int = 4096, num_runs_per_env: int=16, max_parallel_seq: int = 128):
+    vllm_config = {"model_name": model_name, "temperature": 0.6, "max_tokens": max_generation_len, "max_parallel_seq": max_parallel_seq, "max_model_len": 8192, "max_loras": None, "lora_config": {"lora_rank": None}}
+    ray.init(namespace="unstable") # Ray init
+    tracker = unstable.Tracker.options(name="Tracker").remote(run_name=f"EvalRun-{model_name.split('/')[-1]}-{int(time.time())}", wandb_project="UnstableBaselines-eval")
+
+    evaluator = unstable.Evaluator.options(name="Evaluator").remote(tracker=tracker, vllm_config=vllm_config, eval_env_specs=eval_envs, num_runs_per_env=num_runs_per_env)
+    return _UBEval(evaluator=evaluator)
+
+    # env_sampler = usntable.samplers.env_sampler.EvalEnvSampler(eval_env_specs=eval_env_specs)
+    # tracker = unstable.Tracker.options(name="Tracker").remote(run_name=f"EvalRun-{model_name.split('/')[-1]}-{env_sampler.eval_env_list()}={int(time.time())}", wandb_project="UnstableBaselines-eval")
+    # game_scheduler = unstable.GameScheduler.options(name="GameScheduler").remote(model_sampler=None, env_sampler=env_sampler, logging_dir=ray.get(tracker.get_log_dir.remote()))

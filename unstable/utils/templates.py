@@ -11,6 +11,10 @@ TEMPLATE_PARTS = {
         "user": lambda obs: f"<|im_start|>user\nYou are playing a two-player zero-sum game. Make valid actions to win.\nObservation: {obs}\nPlease reason step by step, and put your final answer within \\boxed{{}}.<|im_end|>\n",
         "assistant": "<|im_start|>assistant\n"
     },
+    "qwen3-mp": {
+        "user": lambda obs: f"<|im_start|>user\nYou are playing a competitive multi-player game. Make valid actions to win.\nObservation: {obs}\nPlease reason step by step, and put your final answer within \\boxed{{}}.<|im_end|>\n",
+        "assistant": "<|im_start|>assistant\n"
+    },
     "qwen3-sp": {
         "user": lambda obs:  f"<|im_start|>user\nYou are playing a single-player game. Make valid actions to solve it completely.\nObservation: {obs}\nPlease reason step by step, and put your final answer within \\boxed{{}}.<|im_end|>\n",
         "assistant": "<|im_start|>assistant\n"
