@@ -105,7 +105,7 @@ class CurriculumPolicyEnvSampler(BaseEnvSampler):
             if env_id.endswith("-train") and env_id in allowed_env_ids:
                 prefix = "-".join(env_id.split("-")[:2])
                 chains[prefix].append(env_id)
-        return [tuple(chain) for chain in chains.values() if len(chain) > 1]
+        return [tuple(chain) for chain in chains.values() if len(chain) >= 1]
 
     def _calculate_rate_of_change(self, env_id: str) -> float:
         hist = list(self.reward_history[env_id])
@@ -463,7 +463,7 @@ class CurriculumEnvSampler(BaseEnvSampler):
             if env_id.endswith("-train") and env_id in allowed_env_ids:
                 prefix = "-".join(env_id.split("-")[:2])
                 chains[prefix].append(env_id)
-        return [tuple(chain) for chain in chains.values() if len(chain) > 1]
+        return [tuple(chain) for chain in chains.values() if len(chain) >= 1]
 
     def _calculate_rate_of_change(self, env_id: str) -> float:
         history = self.reward_history[env_id]
@@ -536,11 +536,19 @@ class CurriculumEnvSampler(BaseEnvSampler):
                 scores[chain[i]] -= reduction
                 
         return scores
+    
+    def _normalize_rates(self, rates: Dict[str, float]) -> Dict[str, float]:
+        values = list(rates.values())
+        mean = np.mean(values)
+        std = np.std(values)
+        if std < 1e-6: return {k: 0.0 for k in rates}  # avoid divide-by-zero
+        return {k: (v - mean) / std for k, v in rates.items()}
 
     def _get_sampling_probs(self) -> Dict[str, float]:
         self._update_chain_progress()
-        chain_scores = []
-        for chain in self.env_chains: chain_scores.append(max(self._calculate_rate_of_change(eid) for eid in chain))
+        raw_chain_rates = {chain: max(self._calculate_rate_of_change(eid) for eid in chain) for chain in self.env_chains}
+        normalized_chain_rates = self._normalize_rates(raw_chain_rates)
+        chain_scores = [normalized_chain_rates[chain] for chain in self.env_chains]
         chain_probs = self._softmax(chain_scores)
         env_probs = {}
         for chain, p_chain in zip(self.env_chains, chain_probs):
@@ -585,7 +593,7 @@ class CurriculumEnvSampler(BaseEnvSampler):
         prob_dict = self._get_sampling_probs()
         print(f"[CurriculumEnvSampler] Final sampling probabilities (softmax within chains, normalized): {prob_dict}")
 
-    def sample(self, kind: str = "train", verbose: bool = False) -> TrainEnvSpec | EvalEnvSpec:
+    def sample(self, kind: str = "train", verbose: bool = True) -> TrainEnvSpec | EvalEnvSpec:
         if kind == "eval":
             return self._rng.choice(self._eval)
         
