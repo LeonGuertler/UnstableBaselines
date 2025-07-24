@@ -125,7 +125,7 @@ class Collector:
 
 @ray.remote
 class Evaluator:
-    def __init__(self, vllm_config, tracker, eval_env_specs, num_runs_per_env):
+    def __init__(self, vllm_config, tracker, eval_env_specs, num_runs_per_env, output_folder):
         try:
             self.logger = setup_logger("evaluator", ray.get(tracker.get_log_dir.remote()))
             self.tracker, self.eval_env_specs, self.num_runs_per_env = tracker, eval_env_specs, num_runs_per_env
@@ -145,8 +145,8 @@ class Evaluator:
             # thead keeping
             self.flight: Dict[ray.ObjectRef, TaskMeta] = {}
             self._num_running = lambda typ: sum(meta.type == typ for meta in self.flight.values())
-            
-            self.csv_path = os.path.join(ray.get(self.tracker.get_eval_dir.remote()), "eval_results.csv") # TODO change at some point
+            output_folder = output_folder or ray.get(self.tracker.get_eval_dir.remote())
+            self.csv_path = os.path.join(output_folder, "eval_results.csv")
             self.logger.info(f"csv_path: {self.csv_path}")
             self.csv_fields = ["game_idx", "env_id", "eval_model_pid", "eval_model_reward", "avg_opponent_reward", "num_turns"]
             # if not self.csv_path.exists():

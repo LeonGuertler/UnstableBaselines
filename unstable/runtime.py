@@ -72,12 +72,12 @@ def build(*, model_name: str, train_envs: Sequence[unstable.TrainEnvSpec], eval_
     return _UBRun(collector=collector, learner=learner)
 
 
-def build_evaluator(*, model_name: str, eval_envs: Sequence[unstable.EvalEnvSpec], max_generation_len: int = 4096, num_runs_per_env: int=16, max_parallel_seq: int = 128):
+def build_evaluator(*, model_name: str, eval_envs: Sequence[unstable.EvalEnvSpec], max_generation_len: int = 4096, num_runs_per_env: int=16, max_parallel_seq: int=128, output_folder: Optional[str]=None):
     vllm_config = {"model_name": model_name, "temperature": 0.6, "max_tokens": max_generation_len, "max_parallel_seq": max_parallel_seq, "max_model_len": 8192, "max_loras": None, "lora_config": {"lora_rank": None}}
     ray.init(namespace="unstable") # Ray init
     tracker = unstable.Tracker.options(name="Tracker").remote(run_name=f"EvalRun-{model_name.split('/')[-1]}-{int(time.time())}", wandb_project="UnstableBaselines-eval")
-
-    evaluator = unstable.Evaluator.options(name="Evaluator").remote(tracker=tracker, vllm_config=vllm_config, eval_env_specs=eval_envs, num_runs_per_env=num_runs_per_env)
+    
+    evaluator = unstable.Evaluator.options(name="Evaluator").remote(tracker=tracker, vllm_config=vllm_config, eval_env_specs=eval_envs, num_runs_per_env=num_runs_per_env, output_folder=output_folder)
     return _UBEval(evaluator=evaluator)
 
     # env_sampler = usntable.samplers.env_sampler.EvalEnvSampler(eval_env_specs=eval_env_specs)
