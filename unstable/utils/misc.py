@@ -1,13 +1,6 @@
-import csv, json
-from unstable._types import GameInformation, PlayerTrajectory
+import csv, json, os
+from unstable._types import GameInformation
 
-
-def write_collection_data_to_file(trajectory: PlayerTrajectory, env_id: str, filename: str):
-    with open(filename, "a", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=["env_id", "obs", "actions", "extracted_actions", "final_reward", "turn", "done"])
-        writer.writeheader()
-        for t in range(len(trajectory.obs)):
-            writer.writerow({"env_id": env_id, "obs": trajectory.obs[t], "actions": trajectory.actions[t], "extracted_actions": trajectory.extracted_actions[t], "final_reward": trajectory.final_reward, "turn": (t*2)+trajectory.pid, "done": t==len(trajectory.obs)-1})
 
 def write_training_data_to_file(batch, filename: str):
     with open(filename, mode='w', newline='', encoding='utf-8') as csvfile:
@@ -16,10 +9,11 @@ def write_training_data_to_file(batch, filename: str):
         for step in batch: writer.writerow([step.pid, step.obs, step.act, step.reward, step.env_id, step.step_info])
 
 def write_game_information_to_file(game_info: GameInformation, filename: str) -> None:
-    with open(filename, "w", newline="", encoding="utf-8") as f:
-        writer = csv.DictWriter(f, fieldnames=["game_idx", "turn_idx", "pid", "name", "obs", "full_action", "extracted_action", "step_info", "final_reward", "eval_model_pid", "eval_opponent_name"])
-        writer.writeheader()
+    already_exists = os.path.exists(filename)
+    with open(filename, "a", newline="", encoding="utf-8") as f:
+        writer = csv.DictWriter(f, fieldnames=["game_idx", "env_id", "turn_idx", "pid", "name", "obs", "full_action", "extracted_action", "step_info", "final_reward", "eval_model_pid", "eval_opponent_name"])
+        if not already_exists: writer.writeheader()
         for t in range(game_info.num_turns or len(game_info.obs)):
             pid = game_info.pid[t] if t < len(game_info.pid) else None
-            row = {"game_idx": game_info.game_idx, "turn_idx": t, "pid": pid, "name": game_info.names.get(pid, ""), "obs": game_info.obs[t] if t < len(game_info.obs) else "", "full_action": game_info.full_actions[t] if t < len(game_info.full_actions) else "", "extracted_action": game_info.extracted_actions[t] if t < len(game_info.extracted_actions) else "", "step_info": json.dumps(game_info.step_infos[t] if t < len(game_info.step_infos) else {}, ensure_ascii=False), "final_reward": game_info.final_rewards.get(pid, ""), "eval_model_pid": game_info.eval_model_pid, "eval_opponent_name": game_info.eval_opponent_name}
+            row = {"game_idx": game_info.game_idx, "env_id": game_info.env_id, "turn_idx": t, "pid": pid, "name": game_info.names.get(pid, ""), "obs": game_info.obs[t] if t < len(game_info.obs) else "", "full_action": game_info.full_actions[t] if t < len(game_info.full_actions) else "", "extracted_action": game_info.extracted_actions[t] if t < len(game_info.extracted_actions) else "", "step_info": json.dumps(game_info.step_infos[t] if t < len(game_info.step_infos) else {}, ensure_ascii=False), "final_reward": game_info.final_rewards.get(pid, ""), "eval_model_pid": game_info.eval_model_pid, "eval_opponent_name": game_info.eval_opponent_name}
             writer.writerow(row)

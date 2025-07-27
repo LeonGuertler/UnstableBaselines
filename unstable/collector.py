@@ -14,7 +14,7 @@ from unstable.actor import VLLMActor
 from unstable._types import GameSpec, GameInformation, PlayerTrajectory, TaskMeta
 from unstable.utils.logging import setup_logger
 from unstable.utils.templates import ACTION_EXTRACTION, OBSERVATION_FORMATTING
-from unstable.utils.misc import write_collection_data_to_file
+from unstable.utils.misc import write_game_information_to_file
 
 
 
@@ -35,7 +35,7 @@ class CallableActorWrapper:
 
 @ray.remote(num_cpus=0)
 def run_game(game_spec: GameSpec, actor: VLLMActor):
-    game_information = GameInformation(game_idx=game_spec.game_idx, eval_model_pid=game_spec.eval_model_pid, eval_opponent_name=game_spec.eval_opponent_name)
+    game_information = GameInformation(game_idx=game_spec.game_idx, env_id=game_spec.env_id, eval_model_pid=game_spec.eval_model_pid, eval_opponent_name=game_spec.eval_opponent_name)
     agents = {agent_spec.pid: {
         "traj": PlayerTrajectory(pid=agent_spec.pid) if agent_spec.collect_data else None, 
         "name": agent_spec.lora_path if agent_spec.lora_path else agent_spec.openrouter_name,
@@ -112,7 +112,7 @@ class Collector:
             self.tracker.add_player_trajectory.remote(traj, env_id=meta.env_id)
             if len(traj.obs) > 0: 
                 checkpoint_name = os.path.basename(os.path.normpath(game_information.names[traj.pid])) if game_information.names[traj.pid] else 'None'
-                write_collection_data_to_file(traj, meta.env_id, f"{self.local_storage_dir}/{checkpoint_name}.csv")
+                write_game_information_to_file(game_information, f"{self.local_storage_dir}/{checkpoint_name}.csv")
         self.game_scheduler.update.remote(game_info=game_information)
 
     def _post_eval(self, meta: TaskMeta, game_information: GameInformation):

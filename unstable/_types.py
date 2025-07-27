@@ -28,6 +28,7 @@ class PlayerTrajectory:
 @dataclass
 class GameInformation:
     game_idx:           int = field(default_factory=int)
+    env_id:             str = field(default_factory=str)
     pid:                List[int] = field(default_factory=list)
     obs:                List[str] = field(default_factory=list)
     full_actions:       List[str] = field(default_factory=list)
