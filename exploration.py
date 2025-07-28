@@ -105,13 +105,12 @@ def _write_data(responses, path: str, filename: str):
         writer.writerow(['prompt', 'response'])  # header
         for step in responses: writer.writerow([step["observation"], step["response"]])
 def _generate_data(env_id, engine, sampling_params, lora_req, template, turns: int = 20):
-    env=ta.make(env_id); observations = []
+    observations = []
     if args.fixed_opponent: agents = ['self', ta.agents.OpenRouterAgent(model_name=args.fixed_opponent)]; random.shuffle(agents)
     else: agents = ['self', 'self']
     with tqdm(total=turns, desc="Generating observations") as pbar:
         while len(observations) < turns:
-            turn = 0
-            env.reset(num_players=_num_players[env_id]); env.state.error_allowance=0
+            env=ta.make(env_id);env.reset(num_players=_num_players[env_id]); env.state.error_allowance=0; turn = 0
             while True:
                 pid, obs = env.get_observation(); observations.append({"turn": turn, "id": len(observations), "pid": pid, "env_id": env_id, "observation": obs})
                 pbar.update(1)
