@@ -1,5 +1,8 @@
+import torch
+torch.serialization.add_safe_globals([__import__('collections').deque])
 import time, ray, unstable
 import unstable.reward_transformations as retra
+
 
 MODEL_NAME = "Qwen/Qwen3-4B-Base"
 MAX_TRAIN_SEQ_LEN = None
@@ -19,22 +22,29 @@ vllm_config = {
 ray.init(namespace="unstable")  
 
 # initialize environment scheduler
-env_sampler = unstable.samplers.env_samplers.ExplorativeCurriculumEnvSampler(
+env_sampler = unstable.samplers.env_samplers.CurriculumPolicyEnvSampler(
     train_env_specs=[
-        unstable.TrainEnvSpec(env_id="TowerOfHanoi-v0-train",           num_players=1, num_actors=1, prompt_template="qwen3-sp"),
-        unstable.TrainEnvSpec(env_id="TowerOfHanoi-v0-medium-train",    num_players=1, num_actors=1, prompt_template="qwen3-sp"),
-        unstable.TrainEnvSpec(env_id="TowerOfHanoi-v0-hard-train",      num_players=1, num_actors=1, prompt_template="qwen3-sp"),
-        unstable.TrainEnvSpec(env_id="TowerOfHanoi-v0-hardcore-train",  num_players=1, num_actors=1, prompt_template="qwen3-sp"),
+        unstable.TrainEnvSpec(env_id="2048-v0-train",           num_players=1, num_actors=1, prompt_template="qwen3-sp"),
+        unstable.TrainEnvSpec(env_id="Blackjack-v0-train",      num_players=1, num_actors=1, prompt_template="qwen3-sp"),
+        unstable.TrainEnvSpec(env_id="WordLadder-v0-train",     num_players=1, num_actors=1, prompt_template="qwen3-sp"),
+        unstable.TrainEnvSpec(env_id="Sudoku-v0-train",         num_players=1, num_actors=1, prompt_template="qwen3-sp"),
+        unstable.TrainEnvSpec(env_id="TowerOfHanoi-v0-train",   num_players=1, num_actors=1, prompt_template="qwen3-sp"),
+        unstable.TrainEnvSpec(env_id="WordSearch-v0-train",     num_players=1, num_actors=1, prompt_template="qwen3-sp"),
+        unstable.TrainEnvSpec(env_id="Mastermind-v0-train",     num_players=1, num_actors=1, prompt_template="qwen3-sp"),
     ],
     eval_env_specs=[
-        # unstable.EvalEnvSpec(env_id="SimpleTak-v0-train", num_players=2, prompt_template="qwen3-zs"),
-        unstable.EvalEnvSpec(env_id="TicTacToe-v0-train", num_players=2, prompt_template="qwen3-zs"),
+        unstable.EvalEnvSpec(env_id="TicTacToe-v0-train",           num_players=2, prompt_template="qwen3-zs"),
+        unstable.EvalEnvSpec(env_id="FrozenLake-v0-random-train",   num_players=1, prompt_template="qwen3-sp"),
+        unstable.EvalEnvSpec(env_id="GuessTheNumber-v0-train",      num_players=1, prompt_template="qwen3-sp"),
+        unstable.EvalEnvSpec(env_id="TowerOfHanoi-v0-train",        num_players=1, prompt_template="qwen3-sp"),
+        unstable.EvalEnvSpec(env_id="Wordle-v0-train",              num_players=1, prompt_template="qwen3-sp"),
     ],
 )
+env_sampler.load_policy("sp_experiment7-2_envsampler.pt", freeze=True)
 
 # Tracker
 tracker = unstable.Tracker.options(name="Tracker").remote(
-    run_name=f"Test-curriculum-{MODEL_NAME.split('/')[-1]}-{env_sampler.env_list()}-{int(time.time())}", 
+    run_name=f"sp-experiment7-run3-{MODEL_NAME.split('/')[-1]}-{env_sampler.env_list()}-{int(time.time())}", 
     wandb_project="UnstableBaselines"
 ) 
 
@@ -82,7 +92,9 @@ ray.get(learner.initialize_algorithm.remote(max_train_len=MAX_TRAIN_SEQ_LEN, max
 
 try:
     collector.collect.remote(num_train_workers=512, num_eval_workers=16)
-    ray.get(learner.train.remote(200))
+    ray.get(learner.train.remote(5))
+    # save the policy
+    env_sampler.save_policy("sp_experiment7-2_envsampler.pt")
 finally:
     ray.kill(collector, no_restart=True)
     ray.shutdown()

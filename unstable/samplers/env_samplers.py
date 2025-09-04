@@ -442,7 +442,7 @@ class CurriculumPolicyEnvSampler(BaseEnvSampler):
 
 class CurriculumEnvSampler(BaseEnvSampler):
     def __init__(self, train_env_specs: List[TrainEnvSpec], eval_env_specs: List[EvalEnvSpec] | None = None, rng_seed: int | None = 489,
-                 window_size: int = 50, min_episodes: int = 0, temperature: float = 0.03, exploration_factor: float = 3.0):
+                 window_size: int = 50, min_episodes: int = 0, temperature: float = 0.01, exploration_factor: float = 3.0):
         super().__init__(train_env_specs, eval_env_specs, rng_seed)
         self.env_id_to_spec = {env.env_id: env for env in train_env_specs}
         self.env_chains = self._infer_env_chains_from_registry()
@@ -536,19 +536,11 @@ class CurriculumEnvSampler(BaseEnvSampler):
                 scores[chain[i]] -= reduction
                 
         return scores
-    
-    def _normalize_rates(self, rates: Dict[str, float]) -> Dict[str, float]:
-        values = list(rates.values())
-        mean = np.mean(values)
-        std = np.std(values)
-        if std < 1e-6: return {k: 0.0 for k in rates}  # avoid divide-by-zero
-        return {k: (v - mean) / std for k, v in rates.items()}
 
     def _get_sampling_probs(self) -> Dict[str, float]:
         self._update_chain_progress()
-        raw_chain_rates = {chain: max(self._calculate_rate_of_change(eid) for eid in chain) for chain in self.env_chains}
-        normalized_chain_rates = self._normalize_rates(raw_chain_rates)
-        chain_scores = [normalized_chain_rates[chain] for chain in self.env_chains]
+        chain_scores = []
+        for chain in self.env_chains: chain_scores.append(max(self._calculate_rate_of_change(eid) for eid in chain))
         chain_probs = self._softmax(chain_scores)
         env_probs = {}
         for chain, p_chain in zip(self.env_chains, chain_probs):

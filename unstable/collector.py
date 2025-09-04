@@ -7,7 +7,7 @@ import ray
 from ray.exceptions import RayActorError, RayTaskError
 
 import textarena as ta
-assert ta.__version__ >= "0.6.16", f"TextArena package version is too old: {ta.__version__}. Required version is at least 0.6.16."
+# assert ta.__version__ >= "0.6.16", f"TextArena package version is too old: {ta.__version__}. Required version is at least 0.6.16."
 
 # local imports
 from unstable.actor import VLLMActor
