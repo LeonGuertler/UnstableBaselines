@@ -2,7 +2,7 @@
 <div align="center">
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/_static/logo_ub.png">
-  <img alt="UnstableBaselines logo" src="docs/_static/logo_ub.png" width="100%" height="100%">
+  <img alt="UnstableBaselines logo" src="docs/_static/logo_ub.png" width="80%" height="80%">
 </picture>
 
 
@@ -41,7 +41,7 @@ UnstableBaselines is an Async-, Online-, Multi-Agent RL library focused on simpl
 
 
 ### Quickstart
-You can use our PyPi-package
+You can use our PyPi-package:
 ```bash
 pip3 install unstable-rl
 ```
@@ -74,6 +74,7 @@ python -m unstable.train --config ppo
   <source media="(prefers-color-scheme: light)" srcset="docs/_static/architecture.png">
   <img alt="UnstableBaselines architecture" src="docs/_static/architecture.png" width="100%" height="100%">
 </picture>
+</div>
 
 
 ```
