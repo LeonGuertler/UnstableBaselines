@@ -1,8 +1,9 @@
 
 <div align="center">
-
-<h1 style="font-size: 3em; font-weight: bold; margin: 0; border: none; padding: 0;">UnstableBaselines</h1>
-
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="docs/_static/logo_ub.png">
+  <img alt="UnstableBaselines logo" src="docs/_static/logo_ub.png" width="100%" height="100%">
+</picture>
 
 
 An Async, Online, Multi-Turn, Multi-Agent RL library for training reasoning models on TextArena games.
