@@ -1,0 +1,86 @@
+import ray, time, argparse
+from typing import Dict, Optional, Union
+
+from unstable.common._types import TrainEnvSpec, EvalEnvSpec
+from unstable.common.game_scheduler import GameScheduler
+from unstable.common.trackers import Tracker
+from unstable.common.reward_transformations import ComposeFinalRewardTransforms, ComposeStepRewardTransforms, ComposeSamplingRewardTransforms, ComposeEpisodeSamplingRewardTransforms
+from unstable.common.utils.templates import (
+    get_model_sampler_cls,
+    get_reward_transformation_cls,
+    get_env_sampler_cls,
+    get_model_registry_cls,
+    get_replay_buffer_cls,
+    get_learner_cls,
+    get_algorithm_config
+)
+
+
+def train(config: Optional[Union[Dict, str]] = 'reinforce', interface: bool = False):
+    # Configuration
+    if isinstance(config, str): config = get_algorithm_config(config)
+    num_collection_workers = config.get('collection_workers', 256)
+    num_evaluation_workers = config.get('evaluation_workers', 16)
+    # Initialization
+    ray.init(namespace=config.get('project', 'UnstableBaselines'))
+    tracker = Tracker.options(name="Tracker").remote(
+        run_name=f"{config.get('run', 'Run')}-{int(time.time())}", 
+        wandb_project=config.get('project', 'UnstableBaselines'), wandb_config=config
+    )
+    # Environment Sampler
+    env_sampler_config = config['env_sampler']
+    env_sampler = get_env_sampler_cls(env_sampler_config.pop('type'))(
+        train_env_specs=[
+            TrainEnvSpec(env_id=env['id'], num_players=env['num_players'], num_actors=env['num_actors'], prompt_template=env['prompt_template'])
+            for env in env_sampler_config.pop('train')
+        ],
+        eval_env_specs=[
+            EvalEnvSpec(env_id=env['id'], num_players=env['num_players'], prompt_template=env['prompt_template'])
+            for env in env_sampler_config.pop('eval')
+    ], **env_sampler_config)
+    # Model Sampler and Registry
+    model_sampler_config = config['model_sampler']
+    model_registry_config = model_sampler_config.pop('registry')
+    fixed_opponents = model_registry_config.pop('fixed_opponents')
+    model_registry = get_model_registry_cls(model_registry_config.pop('type')).options(name="ModelRegistry").remote(tracker=tracker, **model_registry_config)
+    ray.get(model_registry.add_checkpoint.remote(uid=config['checkpoint']['uid'], path=config['checkpoint']['path'], iteration=config['checkpoint']['iteration']))
+    for fixed_opponent in fixed_opponents: ray.get(model_registry.add_fixed.remote(name=fixed_opponent))
+    model_sampler = get_model_sampler_cls(model_sampler_config.pop('type'))(model_registry=model_registry, **model_sampler_config) 
+    # Replay Buffer
+    replay_buffer_config = config['replay_buffer']; reward_transformations = replay_buffer_config.pop('reward_transformations'); buffer_type = replay_buffer_config.pop('type')
+    replay_buffer = get_replay_buffer_cls(buffer_type).options(name="Buffer").remote(tracker=tracker,
+        final_reward_transformation=ComposeFinalRewardTransforms([get_reward_transformation_cls(k)(**v) for k,v in reward_transformations['final'].items()]),
+        step_reward_transformation=ComposeStepRewardTransforms([get_reward_transformation_cls(k)(**v) for k,v in reward_transformations['step'].items()]),
+        sampling_reward_transformation=ComposeSamplingRewardTransforms([get_reward_transformation_cls(k)(**v) for k,v in reward_transformations['sampling'].items()]) if buffer_type == 'step_buffer' else ComposeEpisodeSamplingRewardTransforms([get_reward_transformation_cls(k)(**v) for k,v in reward_transformations['sampling'].items()]),
+        **replay_buffer_config
+    )
+    # Game Scheduler
+    action_sampler_config = config['action_sampler']
+    game_scheduler = GameScheduler.options(name="GameScheduler").remote(vllm_config=config['vllm_config'], tracker=tracker, buffer=replay_buffer, model_sampler=model_sampler, env_sampler=env_sampler, action_sampler=action_sampler_config.pop('type'))
+    # Learning algorithm
+    learner_config = config['learner']
+    learner = get_learner_cls(learner_config.pop('type')).options(num_gpus=learner_config.pop('num_gpus'), name="Learner").remote(
+        **learner_config,
+        buffer=replay_buffer,
+        tracker=tracker,
+        model_registry=model_registry
+    )
+    # Terminal Interface
+    if interface: # TODO: Make non-blocking
+        import asyncio; from unstable.common.terminal_interface import TerminalInterface
+        term = TerminalInterface(tracker=tracker, buffer=replay_buffer)
+        asyncio.run(term.run())
+    # Run
+    try:
+        game_scheduler.collect.remote(num_train_workers=num_collection_workers, num_eval_workers=num_evaluation_workers)
+        ray.get(learner.train.remote(config['learner']['num_training_steps']))
+    finally: ray.kill(game_scheduler, no_restart=True); ray.shutdown()
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--config", type=str, default="reinforce", help="Algorithm . Either 'reinforce', 'a2c', 'ppo', 'grpo', or a path to a custom config file.")
+    parser.add_argument("--interface", action="store_true", help="Enable monitoring terminal interface")
+    args = parser.parse_args()
+
+    train(config=args.config, interface=args.interface)

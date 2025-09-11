@@ -1,0 +1,89 @@
+run: "reinforce"
+project: "UB"
+model_name: &model_name "Qwen/Qwen3-1.7B-Base"
+collection_workers: 20
+evaluation_workers: 2
+logging_dir: "outputs"
+training_iterations: &training_iterations 1000
+
+checkpoint:
+  uid: "base"
+  path: null
+  iteration: 0
+
+env_sampler:
+  type: "random"
+  train:
+    - id: "SimpleTak-v0-train"
+      num_players: 2
+      num_actors: 2
+      prompt_template: "qwen3-zs"
+  eval:
+    - id: "SimpleTak-v0-train"
+      num_players: 2
+      prompt_template: "qwen3-zs"
+    - id: "KuhnPoker-v0-train"
+      num_players: 2
+      prompt_template: "qwen3-zs"
+
+action_sampler:
+  type: "default"
+
+model_sampler:
+  type: "mirror"
+  registry:
+    type: "default"
+    fixed_opponents:
+      - "google/gemini-2.0-flash-lite-001"
+
+learner:
+  type: "reinforce"
+  num_gpus: 1
+  num_training_steps: *training_iterations
+  model_name: *model_name
+  batch_size: 20
+  mini_batch_size: 1
+  learning_rate: 0.00001
+  grad_clip: 0.2
+  max_train_len: 3000
+  max_generation_len: &max_generation_len 4096
+  lora_cfg: &lora_cfg
+    lora_rank: 32
+    lora_alpha: 32
+    lora_dropout: 0.0
+    target_modules:
+      - "q_proj"
+      - "k_proj"
+      - "v_proj"
+      - "o_proj"
+      - "gate_proj"
+      - "up_proj"
+      - "down_proj"
+  activation_checkpointing: true
+  gradient_checkpointing: true
+  use_trainer_cache: false
+
+replay_buffer:
+  type: "step_buffer"
+  max_buffer_size: 40
+  reward_transformations:
+    final:
+      role_advantage: {}
+    step:
+      format_reward:
+        reward: 1.5
+      invalid_move_penalty:
+        reward: 1.0
+        penalty: -1.0
+    sampling:
+      normalize_by_env:
+        z_score: true
+
+vllm_config:
+  model_name: *model_name
+  temperature: 0.6
+  max_tokens: *max_generation_len
+  max_parallel_seq: 128
+  max_loras: 8
+  max_model_len: 8192
+  lora_config: *lora_cfg
