@@ -1,7 +1,7 @@
 
 <div align="center">
 <picture>
-  <source media="(prefers-color-scheme: light)" srcset="docs/_static/logo_ub.png">
+  <source media="(prefers-color-scheme: light)" srcset="docs/_static/slogan_logo.png">
   <img alt="UnstableBaselines logo" src="docs/_static/slogan_logo.png" width="80%" height="80%">
 </picture>
 
