@@ -2,7 +2,7 @@
 <div align="center">
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/_static/logo_ub.png">
-  <img alt="UnstableBaselines logo" src="docs/_static/logo_ub.png" width="80%" height="80%">
+  <img alt="UnstableBaselines logo" src="docs/_static/slogan_logo.png" width="80%" height="80%">
 </picture>
 
 
@@ -21,15 +21,7 @@ An Async, Online, Multi-Turn, Multi-Agent RL library for training reasoning mode
 </div>
 
 ---
-> **Work in progress — interfaces will change.**
 
-### Updates
-* 15/07/2025: __v0.2.0__ A2C, runtime object, environment scheduling
-* 23/06/2025: Early release of the pip package (`pip install unstable-rl`)
-* 22/06/2025: Early release of the code base
-
-
-### Introduction
 UnstableBaselines is an Async-, Online-, Multi-Agent RL library focused on simplicity and hackability. Since multiple recent papers showed the sufficiency of LoRA for reasoning tuning, and the fact that opponent sampling for self-play strategies beyond mirror self-play work best when using LoRA weights (since vLLM allows for hot-swapping), we built UnstableBaselines as a LoRA first RL library. We tried to keep the code as straight forward as possible. It is currently around **1.2K** lines long and semi-readable. The main focus of unstable-baselines is to enable fast prototyping/research. For something a bit more production ready we recommend to use [oat](https://github.com/sail-sg/oat) or [verifiers](https://github.com/willccbb/verifiers).
 
 
@@ -37,6 +29,7 @@ UnstableBaselines is an Async-, Online-, Multi-Agent RL library focused on simpl
 * **Asynchronous collection & learning** – actors generate data while learners train.
 * **Multi‑agent, multi‑turn** focus with self‑play or fixed opponents.
 * **LoRA‑first** fine‑tuning workflow for fast, lightweight updates.
+* **Accessability** All our learners can train on a single GPU!
 * **Composable reward transforms** at step, game, and sampling stages.
 
 
@@ -68,6 +61,7 @@ and run it from the command-line interface:
 python -m unstable.train --config ppo
 ```
 
+
 ### Architecture
 <div align="center">
 <picture>
@@ -76,6 +70,11 @@ python -m unstable.train --config ppo
 </picture>
 </div>
 
+
+### Updates
+* 15/07/2025: __v0.2.0__ A2C, runtime object, environment scheduling
+* 23/06/2025: Early release of the pip package (`pip install unstable-rl`)
+* 22/06/2025: Early release of the code base
 
 ```
 Lines of Code per Release
@@ -87,10 +86,6 @@ Lines of Code per Release
 
 ### Collaboration
 Developed in partnership with [PlasticLabs](https://plasticlabs.ai/).
-
-
-### Papers
-We built this code-base as part of our research on self-play for reasoning models on text based games. We hope to finish and release both papers (one focused on the paradigm and one focused on the "scaling-laws" and analysis thereof) within the next couple of weeks!
 
 
 ### Citation [![DOI](https://zenodo.org/badge/975887163.svg)](https://doi.org/10.5281/zenodo.15719270)
