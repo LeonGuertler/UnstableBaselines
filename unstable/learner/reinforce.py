@@ -1,5 +1,5 @@
 import ray, torch
-from unstable.algorithms.base import BaseLearner
+from unstable.learner.base import BaseLearner
 
 @ray.remote
 class REINFORCELearner(BaseLearner):
@@ -20,7 +20,7 @@ class REINFORCELearner(BaseLearner):
 
     def _mini_batch_update_step(self, steps, scaling: float = 1.0):
         enc, advs, obs, avg_len, pct_truncated = self._prepare_batch(steps=steps)
-        out = self.policy_model(**enc)
+        out = self.model(**enc)
         logp = torch.nn.functional.log_softmax(out.logits, dim=-1)
         tgt_ids = enc.input_ids[:, 1:]
         tok_logp = logp[:, :-1, :].gather(-1, tgt_ids.unsqueeze(-1)).squeeze(-1)
@@ -35,14 +35,14 @@ class REINFORCELearner(BaseLearner):
     
     def _update(self, batch):
         metrics_acc = {}
-        self.policy_optimizer.zero_grad(set_to_none=True)
-        for i in range(self.gradient_acc_steps):
+        self.actor_optimizer.zero_grad(set_to_none=True)
+        for i in range(self.grad_accumulation_steps):
             sub = batch[i * self.mini_batch_size : (i + 1) * self.mini_batch_size]
             with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16): 
-                update_metrics = self._mini_batch_update_step(sub, scaling=self.gradient_acc_steps)
-            for k, v in update_metrics.items(): metrics_acc[k] = metrics_acc.get(k, 0.0) + v /  self.gradient_acc_steps
+                update_metrics = self._mini_batch_update_step(sub, scaling=self.grad_accumulation_steps)
+            for k, v in update_metrics.items(): metrics_acc[k] = metrics_acc.get(k, 0.0) + v /  self.grad_accumulation_steps
             self.logger.info(f"Mini-step metrics: {update_metrics}")
         self.logger.info(f"Step metrics: {metrics_acc}")
-        torch.nn.utils.clip_grad_norm_(self.policy_model.parameters(), self.grad_clip)
-        self.policy_optimizer.step()
+        torch.nn.utils.clip_grad_norm_(self.actor_params, self.grad_clip)
+        self.actor_optimizer.step()
         return metrics_acc

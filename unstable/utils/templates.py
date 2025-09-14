@@ -3,63 +3,62 @@ from typing import Tuple, Dict, Callable
 
 
 def get_algorithm_config(algorithm: str) -> dict:
-    import yaml
-    try: return yaml.safe_load(open(f"configs/{algorithm}.yaml"))
+    import yaml; from importlib.resources import files
+    try: return yaml.safe_load(files("unstable").joinpath("config", f"{algorithm}.yaml").read_text(encoding="utf-8"))
     except FileNotFoundError: raise ValueError(f"Algorithm {algorithm} not found")
 
 
 def get_learner_cls(algorithm: str) -> type:
-    import unstable.algorithms
+    import unstable.learner
     match algorithm:
-        case "reinforce": return unstable.algorithms.reinforce.REINFORCELearner
-        case "a2c": return unstable.algorithms.a2c.A2CLearner
-        case "ppo": return unstable.algorithms.ppo.PPOLearner
-        case "grpo": return unstable.algorithms.grpo.GRPOLearner
+        case "reinforce": return unstable.learner.reinforce.REINFORCELearner
+        case "ppo": return unstable.learner.ppo.PPOLearner
+        case "grpo": return unstable.learner.grpo.GRPOLearner
         case _: raise ValueError(f"Algorithm {algorithm} not found")
 
 def get_model_registry_cls(model_registry_strategy: str) -> type:
-    import unstable.common.model_samplers
+    import unstable.collection.model_samplers
     match model_registry_strategy:
-        case "default": return unstable.common.model_samplers.ModelRegistry
+        case "default": return unstable.collection.model_samplers.ModelRegistry
         case _: raise ValueError(f"Model registry strategy {model_registry_strategy} not found")
 
 def get_model_sampler_cls(model_sampling_strategy: str) -> type:
-    import unstable.common.model_samplers
+    import unstable.collection.model_samplers
     match model_sampling_strategy:
-        case "default": return unstable.common.model_samplers.BaseModelSampler
-        case "mirror": return unstable.common.model_samplers.BaseModelSampler
-        case "fixed": return unstable.common.model_samplers.FixedOpponentModelSampler
+        case "default": return unstable.collection.model_samplers.BaseModelSampler
+        case "mirror": return unstable.collection.model_samplers.BaseModelSampler
+        case "fixed": return unstable.collection.model_samplers.FixedOpponentModelSampler
         case _: raise ValueError(f"Model sampling strategy {model_sampling_strategy} not found")
 
 def get_action_sampler_cls(action_sampling_strategy: str) -> type:
-    import unstable.common.action_samplers
+    import unstable.collection.action_samplers
     match action_sampling_strategy:
-        case "default": return unstable.common.action_samplers.BaseActionSampler
-        case "majority_voting": return unstable.common.action_samplers.MajorityVotingActionSampler
+        case "default": return unstable.collection.action_samplers.BaseActionSampler
+        case "majority_voting": return unstable.collection.action_samplers.MajorityVotingActionSampler
         case _: raise ValueError(f"Action sampling strategy {action_sampling_strategy} not found")
 
 def get_env_sampler_cls(env_sampling_strategy: str) -> type:
-    import unstable.common.env_samplers
+    import unstable.collection.env_samplers
     match env_sampling_strategy:
-        case "random": return unstable.common.env_samplers.UniformRandomEnvSampler
+        case "random": return unstable.collection.env_samplers.UniformRandomEnvSampler
         case _: raise ValueError(f"Env sampling strategy {env_sampling_strategy} not found")
 
 def get_replay_buffer_cls(replay_buffer_strategy: str) -> type:
-    import unstable.common.buffers
+    import unstable.collection.buffers
     match replay_buffer_strategy:
-        case "step_buffer": return unstable.common.buffers.StepBuffer
-        case "episode_buffer": return unstable.common.buffers.EpisodeBuffer
+        case "step_buffer": return unstable.collection.buffers.StepBuffer
+        case "episode_buffer": return unstable.collection.buffers.EpisodeBuffer
         case _: raise ValueError(f"Replay buffer strategy {replay_buffer_strategy} not found")
 
 
 def get_reward_transformation_cls(reward_transformation: str) -> type:
-    import unstable.common.reward_transformations
+    import unstable.collection.reward_transformations
     match reward_transformation:
-        case "role_advantage": return unstable.common.reward_transformations.RoleAdvantageByEnvFormatter
-        case "format_reward": return unstable.common.reward_transformations.RewardForFormat
-        case "invalid_move_penalty": return unstable.common.reward_transformations.PenaltyForInvalidMove
-        case "normalize_by_env": return unstable.common.reward_transformations.NormalizeRewardsByEnv
-        case "group_relative_advantage": return unstable.common.reward_transformations.GroupRelativeAdvantage
+        case "role_advantage": return unstable.collection.reward_transformations.RoleAdvantageByEnvFormatter
+        case "format_reward": return unstable.collection.reward_transformations.RewardForFormat
+        case "invalid_move_penalty": return unstable.collection.reward_transformations.PenaltyForInvalidMove
+        case "normalize_by_env": return unstable.collection.reward_transformations.NormalizeRewardsByEnv
+        case "group_relative_advantage": return unstable.collection.reward_transformations.GroupRelativeAdvantage
         case _: raise ValueError(f"Reward transformation {reward_transformation} not found")
 
 def format_template(system: str = "", user: str = "", assistant: str = "") -> str: return f"{system}{user}{assistant}"

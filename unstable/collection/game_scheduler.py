@@ -5,11 +5,11 @@ from ray.exceptions import RayActorError, RayTaskError
 import textarena as ta
 assert ta.__version__ >= "0.6.16", f"TextArena package version is too old: {ta.__version__}. Required version is at least 0.6.16."
 
-from unstable.common.actor import VLLMActor, CallableActorWrapper
-from unstable.common._types import GameSpec, GameInformation, PlayerTrajectory, TaskMeta, AgentSpec
-from unstable.common.utils.logging import setup_logger
-from unstable.common.utils.templates import ACTION_EXTRACTION, OBSERVATION_FORMATTING, get_action_sampler_cls
-from unstable.common.utils.misc import write_game_information_to_file
+from unstable.collection.actor import VLLMActor, CallableActorWrapper
+from unstable.utils._types import GameSpec, GameInformation, PlayerTrajectory, TaskMeta, AgentSpec
+from unstable.utils.logging import setup_logger
+from unstable.utils.templates import ACTION_EXTRACTION, OBSERVATION_FORMATTING, get_action_sampler_cls
+from unstable.utils.misc import write_game_information_to_file
 
 
 @ray.remote(num_cpus=0)

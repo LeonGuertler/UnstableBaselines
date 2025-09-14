@@ -10,7 +10,7 @@
 
 Unstable Baselines is a **lightweight reinforcement-learning research library** focused on self-play for text-based games. 
 Through its deep integration with TextArena, it supports wide range of single and multi-player games. 
-The interface is simple and hackable, making it easy to extend and customize: 
+The interface is simple and hackable. All learning algorithms run on a single GPU, making it easy to experiment, extend and customize: 
 
 
 .. code-block:: python
@@ -51,10 +51,8 @@ The interface is simple and hackable, making it easy to extend and customize:
     :caption: Algorithms
 
     algorithms/reinforce
-    algorithms/a2c
     algorithms/ppo
     algorithms/grpo
-    algorithms/dpo
 
 .. toctree::
    :maxdepth: 2

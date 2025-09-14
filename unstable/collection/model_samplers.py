@@ -3,8 +3,8 @@ from dataclasses import asdict
 from collections import defaultdict
 from typing import Dict, Any, List
 
-from unstable.common._types import GameInformation, ModelMeta
-from unstable.common.utils import setup_logger
+from unstable.utils._types import GameInformation, ModelMeta
+from unstable.utils.logging import setup_logger
 
 
 @ray.remote

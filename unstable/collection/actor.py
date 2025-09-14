@@ -7,7 +7,7 @@ import ray
 from vllm import EngineArgs, LLMEngine, SamplingParams
 from vllm.lora.request import LoRARequest
 
-from unstable.common.utils.logging import setup_logger
+from unstable.utils.logging import setup_logger
 
 
 @ray.remote

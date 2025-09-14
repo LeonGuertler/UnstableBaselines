@@ -26,6 +26,24 @@ with policy ratio:
 Benchmarks
 """"""""""
 
+.. tabs::
+
+   .. tab:: Simple Tak
+
+      First.
+
+   .. tab:: Connect Four
+
+      Second.
+
+   .. tab:: Kuhn Poker
+
+      Third.
+
+   .. tab:: Snake
+
+      Fourth.
+
 Hyperparameters
 """""""""""""""
 

@@ -1,11 +1,11 @@
 import ray, time, argparse
 from typing import Dict, Optional, Union
 
-from unstable.common._types import TrainEnvSpec, EvalEnvSpec
-from unstable.common.game_scheduler import GameScheduler
-from unstable.common.trackers import Tracker
-from unstable.common.reward_transformations import ComposeFinalRewardTransforms, ComposeStepRewardTransforms, ComposeSamplingRewardTransforms, ComposeEpisodeSamplingRewardTransforms
-from unstable.common.utils.templates import (
+from unstable.utils._types import TrainEnvSpec, EvalEnvSpec
+from unstable.collection.game_scheduler import GameScheduler
+from unstable.collection.trackers import Tracker
+from unstable.collection.reward_transformations import ComposeFinalRewardTransforms, ComposeStepRewardTransforms, ComposeSamplingRewardTransforms, ComposeEpisodeSamplingRewardTransforms
+from unstable.utils.templates import (
     get_model_sampler_cls,
     get_reward_transformation_cls,
     get_env_sampler_cls,
@@ -59,7 +59,7 @@ def train(config: Optional[Union[Dict, str]] = 'reinforce', interface: bool = Fa
     game_scheduler = GameScheduler.options(name="GameScheduler").remote(vllm_config=config['vllm_config'], tracker=tracker, buffer=replay_buffer, model_sampler=model_sampler, env_sampler=env_sampler, action_sampler=action_sampler_config.pop('type'))
     # Learning algorithm
     learner_config = config['learner']
-    learner = get_learner_cls(learner_config.pop('type')).options(num_gpus=learner_config.pop('num_gpus'), name="Learner").remote(
+    learner = get_learner_cls(learner_config.pop('type')).options(num_gpus=1, name="Learner").remote(
         **learner_config,
         buffer=replay_buffer,
         tracker=tracker,
@@ -67,14 +67,16 @@ def train(config: Optional[Union[Dict, str]] = 'reinforce', interface: bool = Fa
     )
     # Terminal Interface
     if interface: # TODO: Make non-blocking
-        import asyncio; from unstable.common.terminal_interface import TerminalInterface
+        import asyncio; from unstable.utils.terminal_interface import TerminalInterface
         term = TerminalInterface(tracker=tracker, buffer=replay_buffer)
         asyncio.run(term.run())
     # Run
     try:
         game_scheduler.collect.remote(num_train_workers=num_collection_workers, num_eval_workers=num_evaluation_workers)
-        ray.get(learner.train.remote(config['learner']['num_training_steps']))
+        ray.get(learner.train.remote(config['learner']['total_training_steps']))
+        _, current_ckpt_lora_path = model_sampler.get_current_ckpt()
     finally: ray.kill(game_scheduler, no_restart=True); ray.shutdown()
+    return current_ckpt_lora_path
 
 
 if __name__ == "__main__":

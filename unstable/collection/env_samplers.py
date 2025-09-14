@@ -1,6 +1,6 @@
 import random
 from typing import Protocol, List, Any
-from unstable.common._types import TrainEnvSpec, EvalEnvSpec, GameInformation
+from unstable.utils._types import TrainEnvSpec, EvalEnvSpec, GameInformation
 
 
 class BaseEnvSampler: 

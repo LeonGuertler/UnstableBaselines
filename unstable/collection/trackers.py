@@ -1,9 +1,9 @@
 import os, re, ray, time, wandb, collections, datetime, logging, numpy as np
 from typing import Optional, Union, Dict
-from unstable.common.utils import setup_logger
+from unstable.utils.logging import setup_logger
 
-from unstable.common._types import PlayerTrajectory, GameInformation
-from unstable.common.utils import write_game_information_to_file
+from unstable.utils._types import PlayerTrajectory, GameInformation
+from unstable.utils.misc import write_game_information_to_file
 Scalar = Union[int, float, bool]
 
 class BaseTracker:

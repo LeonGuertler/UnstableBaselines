@@ -18,3 +18,7 @@ h2 {
 .sidebar-brand-text {
     display: none !important;
 }
+
+.sphinx-tabs-tab {
+    color: #000000 !important;
+}

@@ -1,5 +1,5 @@
 import csv, json
-from unstable.common._types import GameInformation
+from unstable.utils._types import GameInformation
 
 
 def write_training_data_to_file(batch, filename: str):

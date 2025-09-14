@@ -4,7 +4,7 @@ from typing import List
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from unstable.common._types import Action
+from unstable.utils._types import Action
 
 
 class BaseActionSampler:

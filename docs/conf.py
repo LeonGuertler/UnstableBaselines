@@ -18,6 +18,7 @@ extensions = [
     "sphinx.ext.viewcode",
     "sphinx.ext.coverage",
     "myst_parser",
+    "sphinx_tabs.tabs",
 ]
 
 autosummary_generate = True

@@ -1,7 +1,7 @@
 import numpy as np
 from typing import List, Optional
 from collections import defaultdict
-from unstable.common._types import Step, PlayerTrajectory
+from unstable.utils._types import Step, PlayerTrajectory
 
 
 ### Final Reward
@@ -92,7 +92,6 @@ class ComposeEpisodeSamplingRewardTransforms:
 
 class GroupRelativeAdvantage(EpisodeSamplingRewardTransform):
     def __call__(self, episodes: List[List[Step]], env_id: Optional[str] = None) -> List[List[Step]]:
-        print([len(episode) for episode in episodes])
         episode_returns = np.array([episode[-1].reward for episode in episodes])
         mean_return = episode_returns.mean(); std_return = episode_returns.std()+1e-8
         for episode in episodes:

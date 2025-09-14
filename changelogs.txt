@@ -1,10 +1,10 @@
 v0.3.0
+- Improved project structure. 
 - Added config logging to wandb.
 - Modified build -> train(): Takes a config as an argument. Start a run from the command-line with "python -m unstable.train --config ppo"
 - Merged Game Scheduler and Collector. 
 - Added ActionSampler.
-- Added PPO and GRPO. 
-- Made A2C token-level (which is in my oppinion more in line with recent research). 
+- Added PPO and GRPO.
 - Added docs. Instructions to start and modify can be found under docs/README.md.
 
 TODO:
@@ -13,3 +13,5 @@ TODO:
 - Make terminal in train() non-blocking and make it return the last checkpoint. Also fill exploration section of the interface. 
 - Check if all __init__.py's are correct. 
 - Fix and create examples. 
+- Fix GAE with trunaction.
+- grad accumulation and scheduling for Reinforce.

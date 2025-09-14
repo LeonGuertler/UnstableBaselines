@@ -4,7 +4,7 @@ model_name: &model_name "Qwen/Qwen3-1.7B-Base"
 collection_workers: 20
 evaluation_workers: 2
 logging_dir: "outputs"
-training_iterations: &training_iterations 1000
+training_iterations: &training_iterations 400
 
 checkpoint:
   uid: "base"
@@ -38,15 +38,16 @@ model_sampler:
 
 learner:
   type: "reinforce"
-  num_gpus: 1
-  num_training_steps: *training_iterations
+  total_training_steps: *training_iterations
   model_name: *model_name
-  batch_size: 20
+  batch_size: 12
   mini_batch_size: 1
-  learning_rate: 0.00001
+  learning_rate: 0.00005
+  lr_scheduler_type: "constant"
+  lr_warmup_ratio: 0.01
   grad_clip: 0.2
-  max_train_len: 3000
-  max_generation_len: &max_generation_len 4096
+  max_train_len: 3072
+  max_generation_len: &max_generation_len 3072
   lora_cfg: &lora_cfg
     lora_rank: 32
     lora_alpha: 32
@@ -65,7 +66,7 @@ learner:
 
 replay_buffer:
   type: "step_buffer"
-  max_buffer_size: 40
+  max_buffer_size: 768
   reward_transformations:
     final:
       role_advantage: {}
