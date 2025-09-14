@@ -63,22 +63,6 @@ and run it from the command-line interface:
 python -m unstable.train --config ppo
 ```
 
-### Updates
-* 15/07/2025: __v0.2.0__ A2C, runtime object, environment scheduling
-* 23/06/2025: Early release of the pip package (`pip install unstable-rl`)
-* 22/06/2025: Early release of the code base
-
-```
-Lines of Code per Release
--------------------------
-0.1.0  | ######################     1,144       -> initial release
-0.2.0  | ########################   1,269       -> added A2C, runtime object, environment scheduling
-```
-
-
-### Collaboration
-Developed in partnership with [PlasticLabs](https://plasticlabs.ai/).
-
 
 ### Citation [![DOI](https://zenodo.org/badge/975887163.svg)](https://doi.org/10.5281/zenodo.15719270)
 
@@ -97,3 +81,5 @@ If you use **UnstableBaselines** in your research, please cite:
 }
 
 ```
+
+Developed in partnership with [PlasticLabs](https://plasticlabs.ai/).
