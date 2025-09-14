@@ -22,6 +22,8 @@ An Async, Online, Multi-Turn, Multi-Agent RL library for training reasoning mode
 
 ---
 
+
+### Introduction
 UnstableBaselines is an Async-, Online-, Multi-Agent RL library focused on simplicity and hackability. Since multiple recent papers showed the sufficiency of LoRA for reasoning tuning, and the fact that opponent sampling for self-play strategies beyond mirror self-play work best when using LoRA weights (since vLLM allows for hot-swapping), we built UnstableBaselines as a LoRA first RL library. We tried to keep the code as straight forward as possible. It is currently around **1.2K** lines long and semi-readable. The main focus of unstable-baselines is to enable fast prototyping/research. For something a bit more production ready we recommend to use [oat](https://github.com/sail-sg/oat) or [verifiers](https://github.com/willccbb/verifiers).
 
 
@@ -60,16 +62,6 @@ and run it from the command-line interface:
 ```bash
 python -m unstable.train --config ppo
 ```
-
-
-### Architecture
-<div align="center">
-<picture>
-  <source media="(prefers-color-scheme: light)" srcset="docs/_static/architecture.png">
-  <img alt="UnstableBaselines architecture" src="docs/_static/architecture.png" width="100%" height="100%">
-</picture>
-</div>
-
 
 ### Updates
 * 15/07/2025: __v0.2.0__ A2C, runtime object, environment scheduling
