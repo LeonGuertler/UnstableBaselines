@@ -42,7 +42,7 @@ learner:
   model_name: *model_name
   batch_size: 12
   mini_batch_size: 1
-  learning_rate: 0.00005
+  learning_rate: 0.00001
   lr_scheduler_type: "constant"
   lr_warmup_ratio: 0.01
   grad_clip: 0.2

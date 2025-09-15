@@ -70,7 +70,7 @@ class BaseLearner:
                 # Metrics
                 log = {f"{k}": v for k, v in accumulated_metrics.items()}
                 log.update({"step": self._step,  "samples_seen": self._samples_seen,  "lr": self.actor_optimizer.param_groups[0]["lr"]})
-                if "policy_grad_norm" not in log: log.update({"policy_grad_norm": sum(p.grad.data.norm(2).item()**2 for p in self.model.parameters() if p.grad is not None) ** 0.5})
+                if "actor_grad_norm" not in log: log.update({"actor_grad_norm": sum(p.grad.data.norm(2).item()**2 for p in self.model.parameters() if p.grad is not None) ** 0.5})
                 self.tracker.log_learner.remote(log)
                 # Save & register the updated checkpoint
                 ckpt_path = self._save_checkpoint()

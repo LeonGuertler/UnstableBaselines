@@ -36,7 +36,7 @@ class PPOLearner(BaseLearner):
         self.gae_lambda = gae_lambda
         self.normalize_adv = normalize_adv
         self.clip_value = clip_value
-        self.critic_params = [p for n, p in self.model.named_parameters() if f".{self.model.critic_adapter_name}." in n]
+        self.critic_params = [p for n, p in self.model.named_parameters() if f".{self.model.critic_adapter_name}." in n or self.model.value_head_prefix in n]
         self.critic_optimizer = torch.optim.AdamW(self.critic_params, lr=critic_learning_rate)
         num_critic_optimizer_steps = int(self.total_training_steps * self.epochs * self.grad_accumulation_steps)
         self.critic_lr_scheduler = get_scheduler(critic_lr_scheduler_type, self.critic_optimizer, num_warmup_steps=int(critic_lr_warmup_ratio * num_critic_optimizer_steps), num_training_steps=num_critic_optimizer_steps)
@@ -156,3 +156,8 @@ class PPOLearner(BaseLearner):
                 self.logger.info(f"Mini-step metrics: {update_metrics}")
         log = {k: v / (self.epochs * self.grad_accumulation_steps) for k, v in metrics_acc.items()}
         return {**log, "avg_train_len": avg_len, "pct_truncated": pct_truncated, "step": self._step, "samples_seen": self._samples_seen}
+
+    def _save_checkpoint(self):
+        ckpt_dir = super()._save_checkpoint()
+        torch.save(getattr(self.model, self.model.value_head_prefix).state_dict(), ckpt_dir / "critic" / "value_head.pth")
+        return ckpt_dir
