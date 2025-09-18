@@ -1,4 +1,4 @@
-import ray, time, argparse
+import ray, argparse
 from typing import Dict, Optional, Union
 
 from unstable.utils._types import TrainEnvSpec, EvalEnvSpec
@@ -24,7 +24,7 @@ def train(config: Optional[Union[Dict, str]] = 'reinforce', interface: bool = Fa
     # Initialization
     ray.init(namespace=config.get('project', 'UnstableBaselines'))
     tracker = Tracker.options(name="Tracker").remote(
-        run_name=f"{config.get('run', 'Run')}-{int(time.time())}", 
+        run_name=f"{config.get('run', 'Run')}", 
         wandb_project=config.get('project', 'UnstableBaselines'), wandb_config=config
     )
     # Environment Sampler

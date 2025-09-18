@@ -12,14 +12,12 @@ from transformers import get_scheduler
 class GRPOLearner(BaseLearner):
     def __init__(
         self,
-        infer_mini_batch_size: int,
         clip_ratio: float,
         entropy_coeff: float,
         beta: float,
         **kwargs
     ):
         super().__init__(value_head=True, **kwargs)
-        self.infer_mini_batch_size = infer_mini_batch_size
         self.clip_ratio = clip_ratio
         self.entropy_coeff = entropy_coeff
         self.beta = beta
@@ -50,7 +48,6 @@ class GRPOLearner(BaseLearner):
         return tok_logp, entropy if compute_entropy else None
 
     def _mini_batch_update_step(self, input_ids, attention_mask, response_mask, logps, advantages, logps_ref) -> Dict[str, float]:
-        self.model.set_adapter(self.model.actor_adapter_name)
         new_logps, entropy = self._get_logps(input_ids, attention_mask, response_mask, compute_entropy=True)
         ratio = torch.exp(new_logps - logps)
         surr1 = ratio * advantages
@@ -74,18 +71,19 @@ class GRPOLearner(BaseLearner):
 
     def _update(self, batch):
         all_steps = tree.flatten(batch)
+        self.model.set_adapter(self.model.actor_adapter_name)
         input_ids, attention_mask, response_mask, avg_len, pct_truncated = self._prepare_batch(all_steps)
         logps = torch.zeros(input_ids.shape[0], input_ids.shape[1]-1, device=self.device)
         if self.beta > 0.0: logps_ref = torch.zeros(input_ids.shape[0], input_ids.shape[1]-1, device=self.device)
-        for i in range(0, len(all_steps), self.infer_mini_batch_size):
-            mb_input_ids, mb_attention_mask = input_ids[i : i + self.infer_mini_batch_size], attention_mask[i : i + self.infer_mini_batch_size]
+        for i in range(0, input_ids.shape[0], self.mini_batch_size):
+            mb_input_ids, mb_attention_mask = input_ids[i : i + self.mini_batch_size], attention_mask[i : i + self.mini_batch_size]
             with torch.no_grad():
-                mb_logps = self._get_logps(mb_input_ids, mb_attention_mask, response_mask[i : i + self.infer_mini_batch_size])[0]
-                logps[i : i + self.infer_mini_batch_size, :mb_logps.shape[1]] = mb_logps
+                mb_logps = self._get_logps(mb_input_ids, mb_attention_mask, response_mask[i : i + self.mini_batch_size])[0]
+                logps[i : i + self.mini_batch_size] = mb_logps
                 if self.beta > 0.0:
                     with self.model.disable_adapter():
-                        mb_logps_ref = self._get_logps(mb_input_ids, mb_attention_mask, response_mask[i : i + self.infer_mini_batch_size])[0]
-                    logps_ref[i : i + self.infer_mini_batch_size, :mb_logps_ref.shape[1]] = mb_logps_ref
+                        mb_logps_ref = self._get_logps(mb_input_ids, mb_attention_mask, response_mask[i : i + self.mini_batch_size])[0]
+                    logps_ref[i : i + self.mini_batch_size] = mb_logps_ref
         # Advantages are already computed in sampling reward transformation - Therefore, we set A_{t,i} = R_i. 
         advantages = torch.zeros(logps.shape[0], logps.shape[1], device=self.device)
         for i in range(len(all_steps)): advantages[i, torch.where(response_mask[i])[0]] = all_steps[i].reward
@@ -100,11 +98,11 @@ class GRPOLearner(BaseLearner):
                 if self.beta > 0.0: mb_logps_ref = logps_ref[mb_idx]
                 else: mb_logps_ref = None
                 update_metrics = self._mini_batch_update_step(mb_input_ids, mb_attention_mask, mb_response_mask, mb_logps, mb_advantages, mb_logps_ref)
-                grad_norm = torch.nn.utils.clip_grad_norm_(self.actor_params, self.grad_clip)
-                update_metrics["actor_grad_norm"] = update_metrics.get("actor_grad_norm", 0.0) + float(grad_norm)
-                self.actor_optimizer.step(); self.actor_optimizer.zero_grad(set_to_none=True); self.actor_lr_scheduler.step()
-                # Metrics
                 for k, v in update_metrics.items(): metrics_acc[k] = metrics_acc.get(k, 0.0) + v
                 self.logger.info(f"Mini-step metrics: {update_metrics}")
-        log = {k: v / (self.epochs * self.grad_accumulation_steps) for k, v in metrics_acc.items()}
+            grad_norm = torch.nn.utils.clip_grad_norm_(self.actor_params, self.grad_clip)
+            metrics_acc["actor_grad_norm"] = metrics_acc.get("actor_grad_norm", 0.0) + float(grad_norm)
+            self.actor_optimizer.step(); self.actor_optimizer.zero_grad(set_to_none=True); self.actor_lr_scheduler.step()
+        log = {k: v / (self.epochs * self.grad_accumulation_steps) for k, v in metrics_acc.items()if k != "actor_grad_norm"}
+        log.update({"actor_grad_norm": metrics_acc["actor_grad_norm"] / self.epochs})
         return {**log, "avg_train_len": avg_len, "pct_truncated": pct_truncated, "step": self._step, "samples_seen": self._samples_seen}

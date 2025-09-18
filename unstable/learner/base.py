@@ -54,7 +54,7 @@ class BaseLearner:
         if self.activation_checkpointing:   enable_full_activation_ckpt(self.model)
         self.actor_params = [p for n, p in self.model.named_parameters() if f".{self.model.actor_adapter_name}." in n]
         self.actor_optimizer = torch.optim.AdamW(self.actor_params, lr=self.lr)
-        total_actor_optimizer_steps = int(self.total_training_steps * self.epochs * self.grad_accumulation_steps)
+        total_actor_optimizer_steps = int(self.total_training_steps * self.epochs)
         self.actor_lr_scheduler = get_scheduler(lr_scheduler_type, self.actor_optimizer, num_warmup_steps=int(lr_warmup_ratio * total_actor_optimizer_steps), num_training_steps=total_actor_optimizer_steps)
         self._step = 1; self._samples_seen = 0 # training counters
 
@@ -90,7 +90,7 @@ class BaseLearner:
         self.model.save_pretrained(ckpt_dir, save_adapter=True)
         return ckpt_dir
 
-    def _masked_mean(self, x, mask, axis=None): return (x * mask).sum(dim=axis) / mask.sum(dim=axis) if axis else (x * mask).sum() / mask.sum()
+    def _masked_mean(self, x, mask, axis=None): return (x * mask).sum(dim=axis) / mask.sum(dim=axis) if axis is not None else (x * mask).sum() / mask.sum()
     def _masked_std(self, x, mask, axis=None, eps: float = 1e-8):
         if axis is None: return x[mask.bool()].std(unbiased=False).clamp_min(eps)
         mean = self._masked_mean(x, mask, axis=axis).unsqueeze(axis)
