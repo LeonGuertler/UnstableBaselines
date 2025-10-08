@@ -53,7 +53,7 @@ class GRPOLearner(BaseLearner):
         surr1 = ratio * advantages
         surr2 = torch.clamp(ratio, 1.0 - self.clip_ratio, 1.0 + self.clip_ratio) * advantages
         policy_loss = -torch.min(surr1, surr2)
-        policy_loss = self._masked_mean(policy_loss, response_mask, axis=1).mean()
+        policy_loss = ((policy_loss * response_mask).sum(dim=1) / self.max_generation_len).mean()
         entropy_loss = self.entropy_coeff * entropy
         total_loss = policy_loss - entropy_loss
         if self.beta > 0.0:
@@ -64,6 +64,7 @@ class GRPOLearner(BaseLearner):
         return {
             "policy_loss": policy_loss.item(),
             "kl": kl.item() if self.beta > 0.0 else 0.0,
+            "ratio": self._masked_mean(ratio, response_mask).item(),
             "entropy": entropy.item(),
             "logp_mean": self._masked_mean(new_logps, response_mask).item(),
             "logp_std": self._masked_std(new_logps, response_mask).item()

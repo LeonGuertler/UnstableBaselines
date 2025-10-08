@@ -43,7 +43,18 @@ The interface is simple and hackable. All learning algorithms run on a single GP
    introduction/overview
    introduction/installation
    introduction/quickstart
-   api/index
+   config/index
+
+.. toctree::
+   :maxdepth: 2
+   :hidden:
+   :caption: Collection
+
+   configuration/game_scheduler
+   configuration/buffer
+   configuration/esampler
+   configuration/msampler
+   configuration/asampler
 
 .. toctree::
     :maxdepth: 2
@@ -68,3 +79,4 @@ The interface is simple and hackable. All learning algorithms run on a single GP
 
     TextArena <https://github.com/LeonGuertler/TextArena>
     Unstable Baselines <https://github.com/LeonGuertler/UnstableBaselines>
+    Contribute! <introduction/contributions>

@@ -1,5 +1,6 @@
 import os
 import sys
+from pathlib import Path
 
 # Add project root to path so autodoc can import without installing
 sys.path.insert(0, os.path.abspath(".."))
@@ -82,3 +83,18 @@ html_css_files = [
 ]
 
 exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store', 'README.md']
+
+
+def _ensure_pygments_css(app):
+    """Make sure furo finds pygments.css even on a fresh build directory."""
+    if app.builder.name != "html":
+        return
+    static_dir = Path(app.outdir) / "_static"
+    static_dir.mkdir(parents=True, exist_ok=True)
+    css_path = static_dir / "pygments.css"
+    if not css_path.exists():
+        css_path.write_text("", encoding="utf-8")
+
+
+def setup(app):
+    app.connect("builder-inited", _ensure_pygments_css)

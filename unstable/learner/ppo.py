@@ -92,6 +92,7 @@ class PPOLearner(BaseLearner):
         return {
             "policy_loss": policy_loss.item(),
             "value_loss": value_loss.item(),
+            "ratio": self._masked_mean(ratio, response_mask).item(),
             "kl": kl.item() if self.beta > 0.0 else 0.0,
             "entropy": entropy.item(),
             "logp_mean": self._masked_mean(new_logps, response_mask).item(),

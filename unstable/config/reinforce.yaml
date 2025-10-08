@@ -1,5 +1,5 @@
-run: "reinforce"
-project: "KLLL"
+run: "default"
+project: "MULTIPLAYER"
 model_name: &model_name "Qwen/Qwen3-1.7B-Base"
 collection_workers: 128
 evaluation_workers: 16
@@ -14,16 +14,13 @@ checkpoint:
 env_sampler:
   type: "random"
   train:
-    - id: "ConnectFour-v0-train"
-      num_players: 2
-      num_actors: 2
+    - id: "Snake-v0-train"
+      num_players: 3
+      num_actors: 3
       prompt_template: "qwen3-zs"
   eval:
-    - id: "ConnectFour-v0-train"
-      num_players: 2
-      prompt_template: "qwen3-zs"
-    - id: "KuhnPoker-v0-train"
-      num_players: 2
+    - id: "Snake-v0-train"
+      num_players: 3
       prompt_template: "qwen3-zs"
 
 action_sampler:
@@ -31,6 +28,7 @@ action_sampler:
 
 model_sampler:
   type: "mirror"
+  include_current_ckpt: true
   registry:
     type: "default"
     fixed_opponents:

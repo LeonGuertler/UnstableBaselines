@@ -1,5 +1,5 @@
 from unstable.train import train
-from unstable.common.utils.templates import get_algorithm_config
+from unstable.utils.templates import get_algorithm_config
 
 
 config = get_algorithm_config("reinforce")

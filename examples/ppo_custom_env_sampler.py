@@ -1,6 +1,6 @@
 from unstable.train import train
-from unstable.common.utils.templates import get_algorithm_config
-from unstable.common.env_samplers import UniformRandomEnvSampler
+from unstable.utils.templates import get_algorithm_config
+from unstable.collection.env_samplers import UniformRandomEnvSampler
 
 
 config = get_algorithm_config("ppo")

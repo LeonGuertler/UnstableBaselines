@@ -10,6 +10,8 @@ You can load any trainings configuration. You can use a provided configuration f
 
     unstable-baselines --config reinforce
 
+We provide default configurations for all algorithms which are easy to modify. You can run a monitoring command-line interface using --monitor.
+In this case, the dashboard will block any console output and will only display the information shown. 
 
 Python
 """"""

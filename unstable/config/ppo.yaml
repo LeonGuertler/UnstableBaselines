@@ -1,5 +1,5 @@
-run: "ppo"
-project: "FINALLY"
+run: "constant_lr"
+project: "ConnectFour-PPO"
 model_name: &model_name "Qwen/Qwen3-1.7B-Base"
 collection_workers: 128
 evaluation_workers: 16
@@ -14,15 +14,12 @@ checkpoint:
 env_sampler:
   type: "random"
   train:
-    - id: "SimpleTak-v0-train"
+    - id: "ConnectFour-v0-train"
       num_players: 2
       num_actors: 2
       prompt_template: "qwen3-zs"
   eval:
-    - id: "SimpleTak-v0-train"
-      num_players: 2
-      prompt_template: "qwen3-zs"
-    - id: "KuhnPoker-v0-train"
+    - id: "ConnectFour-v0-train"
       num_players: 2
       prompt_template: "qwen3-zs"
 
@@ -44,16 +41,16 @@ learner:
   batch_size: 128
   mini_batch_size: 1
   learning_rate: 0.00001
-  lr_scheduler_type: "linear"
+  lr_scheduler_type: "constant"
   lr_warmup_ratio: 0.01
   critic_learning_rate: 0.0001
-  critic_lr_scheduler_type: "linear"
+  critic_lr_scheduler_type: "constant"
   critic_lr_warmup_ratio: 0.01
-  clip_ratio: 0.2
+  clip_ratio: 0.3
   grad_clip: 0.2
   entropy_coeff: 0.0
   value_loss_coeff: 0.5
-  beta: 0.00
+  beta: 0.0
   gamma: 0.99
   gae_lambda: 0.95
   normalize_adv: true
@@ -75,7 +72,7 @@ learner:
 
 replay_buffer:
   type: "step_buffer"
-  max_buffer_size: 512
+  max_buffer_size: 256
   reward_transformations:
     final: {}
     step:
