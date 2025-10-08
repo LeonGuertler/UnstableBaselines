@@ -78,9 +78,10 @@ def train(config: Optional[Union[Dict, str]] = 'reinforce', interface: bool = Fa
     finally: ray.kill(game_scheduler, no_restart=True); ray.shutdown()
     return current_ckpt_lora_path
 
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=str, default="eval", help="Algorithm . Either 'reinforce', 'a2c', 'ppo', 'grpo', or a path to a custom config file.")
+    parser.add_argument("--config", type=str, default="reinforce", help="Algorithm . Either 'reinforce', 'a2c', 'ppo', 'grpo', or a path to a custom config file.")
     parser.add_argument("--interface", action="store_true", help="Enable monitoring terminal interface")
     args = parser.parse_args()
 
