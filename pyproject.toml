@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "unstable-rl"
-version = "0.2.0"
+version = "0.3.0"
 description = "An Async Online Multi-Agent RL library for training reasoning models on TextArena games."
 readme = "README.md"
 requires-python = ">=3.10"

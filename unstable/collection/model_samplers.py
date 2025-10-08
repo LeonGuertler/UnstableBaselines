@@ -94,7 +94,6 @@ class FixedOpponentModelSampler(BaseModelSampler):
 
     def sample_opponent(self): 
         available_models = [model_meta for uid, model_meta in ray.get(self.model_registry.get_all_models.remote()).items() if (model_meta.active and model_meta.kind=="fixed") or (model_meta.uid==ray.get(self.model_registry.get_current_ckpt.remote()) and self.include_current_ckpt)]
-        print('available_models', available_models)
         opponent_meta = random.choice(available_models)
         return opponent_meta.uid, opponent_meta.kind, None, opponent_meta.path_or_name
 

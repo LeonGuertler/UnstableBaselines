@@ -1,8 +1,8 @@
-run: "4B"
-project: "EXP1-Benchmarking"
+run: "default"
+project: "UnstableBaselines-Benchmarks"
 model_name: &model_name "Qwen/Qwen3-4B-Base"
 collection_workers: 128
-evaluation_workers: 16
+evaluation_workers: 0
 logging_dir: "outputs"
 training_iterations: &training_iterations 1000
 
@@ -14,12 +14,12 @@ checkpoint:
 env_sampler:
   type: "random"
   train:
-    - id: "Snake-v0-train"
+    - id: "ConnectFour-v0-train"
       num_players: 2
       num_actors: 2
       prompt_template: "qwen3-zs"
   eval:
-    - id: "Snake-v0-train"
+    - id: "ConnectFour-v0-train"
       num_players: 2
       prompt_template: "qwen3-zs"
 
