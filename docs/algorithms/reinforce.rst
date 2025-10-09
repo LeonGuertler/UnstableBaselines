@@ -34,6 +34,15 @@ REINFORCE
 
 Hyperparameters
 """""""""""""""
-
-Benchmarks
-""""""""""
+**batch_size: int (default: 384)**
+  Number of epochs to train the policy.
+**mini_batch_size: int (default: 1)**
+  Mini batch size for the policy.
+**learning_rate: float (default: 1e-5)**
+  Learning rate for the policy.
+**lr_scheduler_type: str (default: "constant")**
+  Learning rate scheduler type.
+**lr_warmup_ratio: float (default: 0.01)**
+  Learning rate warmup ratio.
+**grad_clip: float (default: 0.2)**
+  Gradient clipping value for the policy.

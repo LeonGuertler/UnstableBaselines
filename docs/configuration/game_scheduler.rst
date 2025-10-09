@@ -57,27 +57,34 @@ API Reference
 vLLM Configuration
 """"""""""""""""""
 
-:param model_name: HuggingFace or local model identifier.
+**model_name** 
+   HuggingFace or local model identifier.
 
-:param temperature: Sampling temperature used during text generation (must be ≥ 0.0).
+**temperature** 
+   Sampling temperature used during text generation (must be ≥ 0.0).
 
-:param max_tokens: Maximum number of tokens to generate per sequence.
+**max_tokens** 
+   Maximum number of tokens to generate per sequence.
 
-:param max_parallel_seq: Maximum number of sequences processed in parallel on a single actor.
+**max_parallel_seq** 
+   Maximum number of sequences processed in parallel on a single actor.
 
-:param max_loras: Maximum number of concurrently loaded LoRA adapters.
+**max_loras** 
+   Maximum number of concurrently loaded LoRA adapters.
 
-:param max_model_len: Maximum context window length for the underlying model.
+**max_model_len** 
+   Maximum context window length for the underlying model.
 
-:param lora_config: Optional configuration for LoRA fine-tuning adapters.
+**lora_config** 
+   Optional configuration for LoRA fine-tuning adapters.
 
-   :param lora_rank: Rank of the LoRA projection matrices.
+   **lora_rank** Rank of the LoRA projection matrices.
 
-   :param lora_alpha: Scaling factor for the LoRA updates.
+   **lora_alpha** Scaling factor for the LoRA updates.
 
-   :param lora_dropout: Dropout probability applied to LoRA layers (range 0.0–1.0).
+   **lora_dropout** Dropout probability applied to LoRA layers (range 0.0–1.0).
 
-   :param target_modules: List of target submodules where LoRA adapters are applied.
+   **target_modules** List of target submodules where LoRA adapters are applied.
 
       Typical target modules include:
 

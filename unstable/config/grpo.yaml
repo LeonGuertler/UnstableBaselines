@@ -1,10 +1,10 @@
-run: "default"
+run: "128"
 project: "UnstableBaselines-Benchmarks"
-model_name: &model_name "Qwen/Qwen3-4B-Base"
+model_name: &model_name "Qwen/Qwen3-1.7B-Base"
 collection_workers: 128
 evaluation_workers: 0
 logging_dir: "outputs"
-training_iterations: &training_iterations 1000
+training_iterations: &training_iterations 800
 
 checkpoint:
   uid: "base"
@@ -14,12 +14,12 @@ checkpoint:
 env_sampler:
   type: "random"
   train:
-    - id: "ConnectFour-v0-train"
+    - id: "Chess-v0-train"
       num_players: 2
       num_actors: 2
       prompt_template: "qwen3-zs"
   eval:
-    - id: "ConnectFour-v0-train"
+    - id: "Chess-v0-train"
       num_players: 2
       prompt_template: "qwen3-zs"
 
@@ -46,9 +46,9 @@ learner:
   clip_ratio: 0.2
   grad_clip: 0.2
   entropy_coeff: 0.0
-  beta: 0.01
+  beta: 0.1
   max_train_len: 3072
-  max_generation_len: &max_generation_len 2048
+  max_generation_len: &max_generation_len 3072
   lora_cfg: &lora_cfg
     lora_rank: 32
     lora_alpha: 32

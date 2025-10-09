@@ -23,63 +23,42 @@ with policy ratio:
    = \frac{\pi_{\theta}(a_{i,t} \mid s_{i,t})}
           {\pi_{\theta_{\text{old}}}(a_{i,t} \mid s_{i,t})}
 
-Benchmarks
-""""""""""
-
-.. tabs::
-
-   .. tab:: Simple Tak
-
-      First.
-
-   .. tab:: Connect Four
-
-      Second.
-
-   .. tab:: Kuhn Poker
-
-      Third.
-
-   .. tab:: Snake
-
-      Fourth.
-
 Hyperparameters
 """""""""""""""
 
-**infer_mini_batch_size: int (default: 4)**
-  Batch size for inference.
+**epochs: int (default: 2)**
+  Number of epochs to train the policy.
+**batch_size: int (default: 384)**
+  Batch size for the policy.
+**mini_batch_size: int (default: 1)**
+  Mini batch size for the policy.
 **learning_rate: float (default: 1e-5)**
   Learning rate for the policy.
-**critic_learning_rate: float (default: 1e-4)**
-  Learning rate for the critic.
+**lr_scheduler_type: str (default: "constant")**
+  Learning rate scheduler type.
+**lr_warmup_ratio: float (default: 0.01)**
+  Learning rate warmup ratio.
 **clip_ratio: float (default: 0.2)**
   Clip ratio for the policy.
-**clip_value: float (default: 0.2)**
-  Clip value for the critic.
+**grad_clip: float (default: 0.2)**
+  Gradient clipping value for the policy.
 **entropy_coeff: float (default: 0.0)**
   Entropy coefficient.
-**beta: float (default: 0.0)**
+**beta: float (default: 0.01)**
   Beta coefficient to weight the KL divergence to the reference model. When larger than 0.0, a referene model must be loaded.
+**infer_mini_batch_size: int (default: 4)**
+  Batch size for inference.
+**critic_learning_rate: float (default: 1e-4)**
+  Learning rate for the critic.
+**clip_value: float (default: 0.2)**
+  Clip value for the critic.
+**critic_lr_scheduler_type: str (default: "linear")**
+  Critic learning rate scheduler type.
+**critic_lr_warmup_ratio: float (default: 0.025)**
+  Critic learning rate warmup ratio.
 **gamma: float (default: 0.99)**
   Discount factor.
 **gae_lambda: float (default: 0.95)**
   Lambda for the GAE.
 **normalize_adv: bool (default: False)**
   Whether to normalize the advantage.
-**max_generation_len: int (default: None)**
-  Maximum generation length.
-**max_train_len: int (default: None)**
-  Maximum training length. Can be used to save vram by truncating the training data.
-**actor_grad_accumulation_steps: int (default: 4)**
-  Actor gradient accumulation steps.
-**critic_grad_accumulation_steps: int (default: 2)**
-  Critic gradient accumulation steps.
-**actor_lr_scheduler_type: str (default: "linear")**
-  Actor learning rate scheduler type.
-**actor_lr_warmup_ratio: float (default: 0.025)**
-  Actor learning rate warmup ratio.
-**critic_lr_scheduler_type: str (default: "linear")**
-  Critic learning rate scheduler type.
-**critic_lr_warmup_ratio: float (default: 0.025)**
-  Critic learning rate warmup ratio.

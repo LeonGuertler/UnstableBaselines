@@ -23,19 +23,23 @@ Architecture
         <img style="width: 800px;" src="../_static/architecture.png" />
     </div>
 
-**Action Sampler.** Text
+**Action Sampler.** The action sampler queries the large language model. 
+Default is that a single response is sampled. 
+However, we have also implemented MajorityVoting and you are free to experiment with different action selection strategies. 
 
-**Environment Sampler.** Text
+**Environment Sampler.** The environment sampler keeps a list of environments and chooses the one for the next game. 
+Default is that a random environment is selected. 
+However, the component offers possibilities for research on curriculum learning.
 
-**Model Sampler.** Text
+**Model Sampler.** By default, we do mirror self-play. 
+However, the model sampler keeps a list of all checkpoints and fixed endpoints to external large language models to facilitate research on opponent selection.
 
-**Game Scheduler.** Text
+**Game Scheduler.** The game scheduler implements the logic to start the next games asynchronously and collect the results. 
+It queries the environment and model sampler for the next game and pushes the results to the replay buffer.
 
-**Learner.** Text
+**Learner.** The learner does the actual training of the large language model. 
+It fetches data from the replay buffer, computes the loss, updates the model, and registers the checkpoint.
 
-**Replay Buffer.** Text
-
-Configuration
-"""""""""""""
-Unstable Baselines follows a modular architecture, which allows for easy extension and customization.
+**Replay Buffer.** The replay buffer stores the game interaction data. 
+Default is that steps are stored. However, we have also implemented 
 

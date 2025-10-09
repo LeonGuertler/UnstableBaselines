@@ -1,10 +1,10 @@
 run: "default"
-project: "MULTIPLAYER"
+project: "UnstableBaselines-Benchmarks"
 model_name: &model_name "Qwen/Qwen3-1.7B-Base"
-collection_workers: 128
-evaluation_workers: 16
+collection_workers: 384
+evaluation_workers: 0
 logging_dir: "outputs"
-training_iterations: &training_iterations 400
+training_iterations: &training_iterations 800
 
 checkpoint:
   uid: "base"
@@ -28,7 +28,6 @@ action_sampler:
 
 model_sampler:
   type: "mirror"
-  include_current_ckpt: true
   registry:
     type: "default"
     fixed_opponents:
@@ -38,14 +37,14 @@ learner:
   type: "reinforce"
   total_training_steps: *training_iterations
   model_name: *model_name
-  batch_size: 128
+  batch_size: 384
   mini_batch_size: 1
   learning_rate: 0.00001
   lr_scheduler_type: "constant"
   lr_warmup_ratio: 0.01
   grad_clip: 0.2
-  max_train_len: 3072
-  max_generation_len: &max_generation_len 2048
+  max_train_len: 4096
+  max_generation_len: &max_generation_len 4096
   lora_cfg: &lora_cfg
     lora_rank: 32
     lora_alpha: 32
@@ -64,7 +63,7 @@ learner:
 
 replay_buffer:
   type: "step_buffer"
-  max_buffer_size: 256
+  max_buffer_size: 768
   reward_transformations:
     final:
       role_advantage: {}
