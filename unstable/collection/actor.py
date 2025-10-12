@@ -55,6 +55,7 @@ class VLLMActor:
         return await fut
 
     async def _batch_loop(self):
+        self.logger.info("Starting _batch_loop")
         while True:
             try:
                 await asyncio.sleep(0.02)
@@ -83,6 +84,9 @@ class VLLMActor:
                         self._req2lora.pop(req_id, None)
                         fut.set_exception(e)
                         continue
+                if not self._queue and self._running == 0:
+                    self._last_step_time = time.monotonic()
+                    continue
                 try:
                     step_start = time.monotonic()
                     outs = self.engine.step()
@@ -129,6 +133,8 @@ class VLLMActor:
         while self._tok_hist and now - self._tok_hist[0] > window:
             self._tok_hist.popleft()
         return len(self._tok_hist) / window
+
+    def ready(self):  return True
 
 
 class CallableActorWrapper:

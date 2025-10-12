@@ -58,6 +58,7 @@ class GameScheduler:
         self.env_sampler = env_sampler
         self.action_sampler = action_sampler
         self.actors = [VLLMActor.options(num_gpus=1).remote(cfg=vllm_config, tracker=tracker, name=f"Actor-{i}") for i in range(int(ray.available_resources().get("GPU", 0)))]
+        for actor in self.actors: ray.get(actor.ready.remote())
         self._actor_iter = itertools.cycle(self.actors)
         self.local_storage_dir = ray.get(self.tracker.get_collection_dir.remote())
         self._game_idx = 0
