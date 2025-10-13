@@ -1,6 +1,6 @@
 run: "default"
 project: "UnstableBaselines-Benchmarks"
-model_name: &model_name "Qwen/Qwen3-1.7B-Base"
+model_name: &model_name "Qwen/Qwen3-4B-Base"
 collection_workers: 384
 evaluation_workers: 0
 logging_dir: "outputs"
@@ -14,13 +14,13 @@ checkpoint:
 env_sampler:
   type: "random"
   train:
-    - id: "Snake-v0-train"
-      num_players: 3
-      num_actors: 3
+    - id: "SimpleTak-v0-train"
+      num_players: 2
+      num_actors: 2
       prompt_template: "qwen3-zs"
   eval:
-    - id: "Snake-v0-train"
-      num_players: 3
+    - id: "SimpleTak-v0-train"
+      num_players: 2
       prompt_template: "qwen3-zs"
 
 action_sampler:
@@ -43,7 +43,7 @@ learner:
   lr_scheduler_type: "constant"
   lr_warmup_ratio: 0.01
   grad_clip: 0.2
-  max_train_len: 4096
+  max_train_len: null
   max_generation_len: &max_generation_len 4096
   lora_cfg: &lora_cfg
     lora_rank: 32
