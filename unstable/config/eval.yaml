@@ -1,5 +1,5 @@
 run: "base-2epoch"
-project: "EXP1-Benchmarking"
+project: "Benchmarking-Eval"
 model_name: &model_name "Qwen/Qwen3-1.7B-Base"
 num_eval_workers: 16
 output_dir: "eval_results"

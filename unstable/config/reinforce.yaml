@@ -1,10 +1,10 @@
 run: "default"
-project: "UnstableBaselines-Benchmarks"
+project: "UB-Benchmarking"
 model_name: &model_name "Qwen/Qwen3-4B-Base"
 collection_workers: 384
 evaluation_workers: 0
 logging_dir: "outputs"
-training_iterations: &training_iterations 800
+training_iterations: &training_iterations 600
 
 checkpoint:
   uid: "base"
@@ -57,8 +57,8 @@ learner:
       - "gate_proj"
       - "up_proj"
       - "down_proj"
-  activation_checkpointing: true
-  gradient_checkpointing: true
+  activation_checkpointing: false
+  gradient_checkpointing: false
   use_trainer_cache: false
 
 replay_buffer:
