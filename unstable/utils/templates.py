@@ -28,6 +28,7 @@ def get_model_sampler_cls(model_sampling_strategy: str) -> type:
         case "default": return unstable.collection.model_samplers.BaseModelSampler
         case "mirror": return unstable.collection.model_samplers.BaseModelSampler
         case "fixed": return unstable.collection.model_samplers.FixedOpponentModelSampler
+        case "asynchronous": return unstable.collection.model_samplers.AsynchronousModelSampler
         case _: raise ValueError(f"Model sampling strategy {model_sampling_strategy} not found")
 
 def get_action_sampler_cls(action_sampling_strategy: str) -> type:

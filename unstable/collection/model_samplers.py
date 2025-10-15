@@ -1,6 +1,6 @@
 import ray, random, copy, trueskill
 from dataclasses import asdict
-from collections import defaultdict
+from collections import defaultdict, deque
 from typing import Dict, Any, List
 
 from unstable.utils._types import GameInformation, ModelMeta
@@ -11,13 +11,13 @@ from unstable.utils.logging import setup_logger
 class ModelRegistry:
     ''' Keeps a registry of models and their ratings. 
     '''
-    def __init__(self, tracker, beta: float = 4.0):
+    def __init__(self, tracker, beta: float = 4.0, k: int = 1):
         self.TS = trueskill.TrueSkill(beta=beta)
         self._db: dict[str, ModelMeta] = {}
         self._match_counts = defaultdict(int) # (uid_a, uid_b) -> n
         self._exploration = defaultdict(lambda: defaultdict(dict))
-        self._current_ckpt_uid : str | None = None 
-        self._tracker = tracker; self._update_step: int = 1
+        self._current_ckpt_uid : str | None = None; self.active_ckpt = deque()
+        self._tracker = tracker; self._update_step: int = 1; self.k = k
         self.logger = setup_logger("model_registry", ray.get(self._tracker.get_log_dir.remote()))
 
     @staticmethod
@@ -35,6 +35,9 @@ class ModelRegistry:
         rating = self.TS.Rating(mu=self._db[self._current_ckpt_uid].rating.mu, sigma=self._db[self._current_ckpt_uid].rating.sigma*2) if (inherit and self._current_ckpt_uid in self._db) else self.TS.create_rating()
         self._db[uid] = ModelMeta(uid=uid, kind="checkpoint", path_or_name=path, rating=rating, iteration=iteration)
         self._current_ckpt_uid = uid # make it current
+        if self.k is not None: 
+            self.active_ckpt.append(uid)
+            if len(self.active_ckpt) > self.k: self._db[self.active_ckpt.popleft()].active = False
         self.logger.info(f"added ckpt: {uid}, path {path}, iteration {iteration}, inherit: {inherit}")
 
     def get_all_models(self): return copy.deepcopy(self._db)
@@ -97,3 +100,12 @@ class FixedOpponentModelSampler(BaseModelSampler):
         opponent_meta = random.choice(available_models)
         return opponent_meta.uid, opponent_meta.kind, None, opponent_meta.path_or_name
 
+
+class AsynchronousModelSampler(BaseModelSampler):
+    def __init__(self, model_registry):
+        super().__init__(model_registry)
+    
+    def sample_opponent(self): 
+        available_models = [model_meta for uid, model_meta in ray.get(self.model_registry.get_all_models.remote()).items() if (model_meta.active and model_meta.kind=="checkpoint")]
+        opponent_meta = random.choice(available_models)
+        return opponent_meta.uid, opponent_meta.kind, None, opponent_meta.path_or_name

@@ -120,15 +120,14 @@ class GameScheduler:
                     self._running_jobs[self._game_idx]["models"].append({"uid": current_ckpt_uid, "pid": pid, "type": "model"})
                     agent_specs.append(AgentSpec(pid=pid, kind="checkpoint", collect_data=True, lora_path=current_ckpt_lora_path, prompt_template=env_spec.prompt_template, action_extraction_fn=env_spec.action_extraction_fn))
                 else:
-                    opp_uid, kind, opp_lora_path, opp_openrouter_name = self.model_sampler.sample_opponent()
-                    agent_specs.append(AgentSpec(pid=pid, kind=kind, lora_path=opp_lora_path, openrouter_name=opp_openrouter_name)) # TODO might have to adjust what is passed
+                    opp_uid, kind, opp_lora_path, opp_name_or_path = self.model_sampler.sample_opponent()
+                    if kind == "checkpoint": agent_specs.append(AgentSpec(pid=pid, kind="checkpoint", collect_data=False, lora_path=opp_name_or_path, prompt_template=env_spec.prompt_template, action_extraction_fn=env_spec.action_extraction_fn))
+                    else: agent_specs.append(AgentSpec(pid=pid, kind=kind, lora_path=opp_lora_path, openrouter_name=opp_name_or_path)) # TODO might have to adjust what is passed
                     self._running_jobs[self._game_idx]["models"].append({"uid": opp_uid, "pid": pid, "type": "opponent"})
             game_spec = GameSpec(game_idx=self._game_idx, env_id=env_spec.env_id, seed=self._game_idx, agent_specs=agent_specs) # populate GameSpec
             self._game_idx += 1
             return game_spec
         except Exception as exc:
-            import traceback
-            traceback.print_exc()
             self.logger.info(f"Exception in 'next_train_job': {exc}")
             import time 
             time.sleep(500)

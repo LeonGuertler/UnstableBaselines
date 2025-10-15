@@ -15,12 +15,14 @@ class GRPOLearner(BaseLearner):
         clip_ratio: float,
         entropy_coeff: float,
         beta: float,
+        inference_mini_batch_size: int,
         **kwargs
     ):
-        super().__init__(value_head=True, **kwargs)
+        super().__init__(**kwargs)
         self.clip_ratio = clip_ratio
         self.entropy_coeff = entropy_coeff
         self.beta = beta
+        self.inference_mini_batch_size = inference_mini_batch_size
 
     def _prepare_batch(self, steps: List) -> tuple:
         obs, acts = zip(*[(s.obs, s.act)for s in steps])
@@ -38,14 +40,17 @@ class GRPOLearner(BaseLearner):
 
     def _get_logps(self, input_ids, attention_mask, response_mask, compute_entropy: bool=False):
         out = self.model(input_ids=input_ids, attention_mask=attention_mask)
-        logits = out.logits
-        logp = F.log_softmax(logits, dim=-1)
+        logits = out.logits[:, :-1, :]
         tgt_ids = input_ids[:, 1:]
-        tok_logp = logp[:, :-1, :].gather(-1, tgt_ids.unsqueeze(-1)).squeeze(-1)
+        lse = torch.logsumexp(logits, dim=-1)      # reduces to [B,T]
+        tgt_logits = logits.gather(-1, tgt_ids.unsqueeze(-1)).squeeze(-1)
+        tok_logp = tgt_logits - lse
+        entropy = None
         if compute_entropy:
-            tok_entropy = -(torch.exp(logp[:, :-1, :]) * logp[:, :-1, :]).sum(dim=-1)  # [B, T-1]
-            entropy = self._masked_mean(tok_entropy, response_mask)
-        return tok_logp, entropy if compute_entropy else None
+            probs       = torch.exp(logits - lse.unsqueeze(-1))
+            tok_entropy = lse - (probs * logits).sum(dim=-1)
+            entropy     = self._masked_mean(tok_entropy, response_mask)
+        return tok_logp, entropy
 
     def _mini_batch_update_step(self, input_ids, attention_mask, response_mask, logps, advantages, logps_ref) -> Dict[str, float]:
         new_logps, entropy = self._get_logps(input_ids, attention_mask, response_mask, compute_entropy=True)
@@ -76,15 +81,15 @@ class GRPOLearner(BaseLearner):
         input_ids, attention_mask, response_mask, avg_len, pct_truncated = self._prepare_batch(all_steps)
         logps = torch.zeros(input_ids.shape[0], input_ids.shape[1]-1, device=self.device)
         if self.beta > 0.0: logps_ref = torch.zeros(input_ids.shape[0], input_ids.shape[1]-1, device=self.device)
-        for i in range(0, input_ids.shape[0], self.mini_batch_size):
-            mb_input_ids, mb_attention_mask = input_ids[i : i + self.mini_batch_size], attention_mask[i : i + self.mini_batch_size]
+        for i in range(0, input_ids.shape[0], self.inference_mini_batch_size):
+            mb_input_ids, mb_attention_mask = input_ids[i : i + self.inference_mini_batch_size], attention_mask[i : i + self.inference_mini_batch_size]
             with torch.no_grad():
-                mb_logps = self._get_logps(mb_input_ids, mb_attention_mask, response_mask[i : i + self.mini_batch_size])[0]
-                logps[i : i + self.mini_batch_size] = mb_logps
+                mb_logps = self._get_logps(mb_input_ids, mb_attention_mask, response_mask[i : i + self.inference_mini_batch_size])[0]
+                logps[i : i + self.inference_mini_batch_size] = mb_logps
                 if self.beta > 0.0:
                     with self.model.disable_adapter():
-                        mb_logps_ref = self._get_logps(mb_input_ids, mb_attention_mask, response_mask[i : i + self.mini_batch_size])[0]
-                    logps_ref[i : i + self.mini_batch_size] = mb_logps_ref
+                        mb_logps_ref = self._get_logps(mb_input_ids, mb_attention_mask, response_mask[i : i + self.inference_mini_batch_size])[0]
+                    logps_ref[i : i + self.inference_mini_batch_size] = mb_logps_ref
         # Advantages are already computed in sampling reward transformation - Therefore, we set A_{t,i} = R_i. 
         advantages = torch.zeros(logps.shape[0], logps.shape[1], device=self.device)
         for i in range(len(all_steps)): advantages[i, torch.where(response_mask[i])[0]] = all_steps[i].reward
