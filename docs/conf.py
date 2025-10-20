@@ -7,6 +7,7 @@ sys.path.insert(0, os.path.abspath(".."))
 
 project = "UnstableBaselines"
 author = "Leon Guertler, Tim Grams, Zichen Liu, and Bobby Cheng"
+copyright = "2024, Leon Guertler, Tim Grams, Zichen Liu, and Bobby Cheng"
 
 # Keep in sync with pyproject if updated later
 release = "0.2.0"
@@ -53,6 +54,7 @@ intersphinx_mapping = {
 
 templates_path = ["_templates"]
 html_static_path = ["_static"]
+html_js_files = ["disable-dark-mode.js"]
 
 html_theme = "furo"
 html_logo = "_static/logo_ub.png"

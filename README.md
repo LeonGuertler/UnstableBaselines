@@ -10,7 +10,7 @@ An Async, Online, Multi-Turn, Multi-Agent RL library for training reasoning mode
 
 <h3>
 
-[Documentation](https://github.com/LeonGuertler/UnstableBaselines/blob/main/docs/documentation.md)
+[Documentation](https://ub.readthedocs.io/en/latest/)
 
 </h3>
 

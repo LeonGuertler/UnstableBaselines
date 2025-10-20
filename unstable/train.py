@@ -1,4 +1,4 @@
-import ray, argparse
+import ray, argparse, os
 from ray.util.placement_group import placement_group
 from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 from typing import Dict, Optional, Union
@@ -24,7 +24,7 @@ def train(config: Optional[Union[Dict, str]] = 'reinforce', interface: bool = Fa
     num_collection_workers = config.get('collection_workers', 256)
     num_evaluation_workers = config.get('evaluation_workers', 16)
     # Initialization
-    ray.init(config.get('ray', {}).get('address', None), namespace=config.get('project', 'UnstableBaselines'))
+    ray.init(config.get('head', None), namespace=config.get('project', 'UnstableBaselines'))
     learner_config = config['learner']
     learner_gpus = learner_config.pop('num_gpus', 1)
     learner_placement_group = placement_group(bundles=[{"GPU": 1, "CPU": 1} for _ in range(learner_gpus)], strategy="PACK")
@@ -77,16 +77,29 @@ def train(config: Optional[Union[Dict, str]] = 'reinforce', interface: bool = Fa
     action_sampler_config = config['action_sampler']
     game_scheduler = GameScheduler.options(name="GameScheduler").remote(vllm_config=config['vllm_config'], tracker=tracker, buffer=replay_buffer, model_sampler=model_sampler, env_sampler=env_sampler, action_sampler=action_sampler_config.pop('type'))
     # Terminal Interface
-    if interface: # TODO: Make non-blocking
-        import asyncio; from unstable.utils.terminal_interface import TerminalInterface
-        term = TerminalInterface(tracker=tracker, buffer=replay_buffer)
-        asyncio.run(term.run())
+    if interface:
+        import asyncio, os
+        from threading import Thread
+        from contextlib import redirect_stdout, redirect_stderr
+        from unstable.utils.terminal_interface import TerminalInterface
+
+        term = TerminalInterface(tracker=tracker, buffer=replay_buffer)  # bind to real stdout
+
+        def _drive_ui():
+            asyncio.run(term.run())
+
+        Thread(target=_drive_ui, daemon=True).start()
     # Run
     try:
         game_scheduler.collect.remote(num_train_workers=num_collection_workers, num_eval_workers=num_evaluation_workers)
         ray.get([learner.train.remote(iterations=config['learner']['total_training_steps']) for learner in leaners])
         _, current_ckpt_lora_path = model_sampler.get_current_ckpt()
-    finally: ray.kill(game_scheduler, no_restart=True); ray.shutdown()
+    finally: 
+        if interface:
+            stderr_cm.__exit__(None, None, None)
+            stdout_cm.__exit__(None, None, None)
+            null.close()
+        ray.kill(game_scheduler, no_restart=True); ray.shutdown()
     return current_ckpt_lora_path
 
 

@@ -31,8 +31,11 @@ class BaseLearner:
         value_head: bool=False, 
         initial_lora_path: Optional[str]=None,
         zero_optimization: Optional[Dict[str,Any]]=None,
+        gradient_checkpointing: bool = False,
+        activation_checkpointing:  bool = False,
         rank: int = 0,
         world_size: int = 1,
+        env_vars = {},
         **kwargs
     ):
         self.model_name = model_name
@@ -51,11 +54,15 @@ class BaseLearner:
         self.grad_clip = grad_clip
         self.lr_scheduler_type = lr_scheduler_type
         self.lr_warmup_ratio = lr_warmup_ratio
+        for k, v in env_vars.items(): os.environ[k] = v
         self.ckpt_dir = pathlib.Path(ray.get(self.tracker.get_checkpoints_dir.remote()))
         self.ckpt_dir.mkdir(parents=True, exist_ok=True)
         torch.set_float32_matmul_precision("high")
         self.device = torch.device(f"cuda:0") if ray.get_gpu_ids() else torch.device("cpu")
         model, self.tokenizer = build_peft_model(model_name, self.device, lora_cfg, initial_lora_path, value_head=value_head)
+        if not self.use_trainer_cache:      model.config.use_cache = False
+        if gradient_checkpointing:     model.gradient_checkpointing_enable()
+        if activation_checkpointing:   enable_full_activation_ckpt(model)
         params = [{'params': [p for n, p in model.named_parameters() if f".{model.actor_adapter_name}." in n], 'lr': self.lr}]
         self.optimizer = torch.optim.AdamW(params, lr=self.lr, fused=True)
         total_optimizer_steps = int(self.total_training_steps * self.epochs)

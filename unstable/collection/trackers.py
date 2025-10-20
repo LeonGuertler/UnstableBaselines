@@ -106,6 +106,9 @@ class Tracker(BaseTracker):
             self.logger.info(f"Exception in log_learner: {exc}")
 
     def get_interface_info(self): 
+        print("Computing interface stats...")
+        print(self._m)
         for inf_key in ["Game Length", "Format Success Rate - correct_answer_format", "Format Success Rate - invalid_move"]: 
             self._interface_stats[inf_key] = np.mean([float(np.mean(dq)) for k,dq in self._m.items() if inf_key in k])
+            print(self._interface_stats[inf_key])
         return self._interface_stats

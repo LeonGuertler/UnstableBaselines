@@ -22,3 +22,8 @@ h2 {
 .sphinx-tabs-tab {
     color: #000000 !important;
 }
+
+.theme-toggle,
+.theme-toggle-container {
+    display: none !important;
+}
