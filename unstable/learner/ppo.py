@@ -54,22 +54,24 @@ class PPOLearner(BaseLearner):
         return enc.input_ids, enc.attention_mask, response_mask, avg_len, pct_truncated
 
     def _get_logps(self, input_ids, attention_mask, response_mask, compute_entropy: bool=False):
-        out = self.model(input_ids=input_ids, attention_mask=attention_mask)
-        logits = out.logits
-        logp = F.log_softmax(logits, dim=-1)
+        out = self.engine(input_ids=input_ids, attention_mask=attention_mask)
+        logits = out.logits[:, :-1, :]
         tgt_ids = input_ids[:, 1:]
-        tok_logp = logp[:, :-1, :].gather(-1, tgt_ids.unsqueeze(-1)).squeeze(-1)
+        lse = torch.logsumexp(logits, dim=-1)
+        tgt_logits = logits.gather(-1, tgt_ids.unsqueeze(-1)).squeeze(-1)
+        tok_logp = tgt_logits - lse
+        entropy = None
         if compute_entropy:
-            tok_entropy = -(torch.exp(logp[:, :-1, :]) * logp[:, :-1, :]).sum(dim=-1)  # [B, T-1]
-            entropy = self._masked_mean(tok_entropy, response_mask)
-        return tok_logp, entropy if compute_entropy else None
+            probs       = torch.exp(logits - lse.unsqueeze(-1))
+            tok_entropy = lse - (probs * logits).sum(dim=-1)
+            entropy     = self._masked_mean(tok_entropy, response_mask)
+        return tok_logp, entropy
 
     def _mini_batch_update_step(self, input_ids, attention_mask, response_mask, logps, returns, values, advantages, logps_ref) -> Dict[str, float]:
         # Policy Update
         self.model.set_adapter(self.model.actor_adapter_name)
         new_logps, entropy = self._get_logps(input_ids, attention_mask, response_mask, compute_entropy=True)
         ratio = torch.exp(new_logps - logps)
-        print('ratio', ratio)
         surr1 = ratio * advantages
         surr2 = torch.clamp(ratio, 1.0 - self.clip_ratio, 1.0 + self.clip_ratio) * advantages
         policy_loss = -torch.min(surr1, surr2)
@@ -79,16 +81,14 @@ class PPOLearner(BaseLearner):
         if self.beta > 0.0:
             kl = self._masked_mean(torch.exp(logps_ref - new_logps) - (logps_ref - new_logps) - 1, response_mask)
             total_loss += self.beta * kl
-        total_loss = total_loss / self.grad_accumulation_steps
-        total_loss.backward()
+        self.engine.backward(total_loss)
         # Critic Update
         self.model.set_adapter(self.model.critic_adapter_name)
         value_pred = self.model.values(input_ids, attention_mask)[:, :-1]
         value_loss = torch.max((value_pred - returns).pow(2), (torch.clamp(value_pred, values-self.clip_value, values+self.clip_value) - returns).pow(2))
         value_loss = (0.5 * self._masked_mean(value_loss, response_mask, axis=1)).mean()
         value_loss = value_loss * self.value_loss_coeff
-        value_loss = value_loss / self.grad_accumulation_steps
-        value_loss.backward()
+        self.engine.backward(value_loss)
         return {
             "policy_loss": policy_loss.item(),
             "value_loss": value_loss.item(),
@@ -147,14 +147,8 @@ class PPOLearner(BaseLearner):
                 update_metrics = self._mini_batch_update_step(mb_input_ids, mb_attention_mask, mb_response_mask, mb_logps, mb_returns, mb_values, mb_advantages, mb_logps_ref)
                 for k, v in update_metrics.items(): metrics_acc[k] = metrics_acc.get(k, 0.0) + v
                 self.logger.info(f"Mini-step metrics: {update_metrics}")
-            grad_norm = torch.nn.utils.clip_grad_norm_(self.actor_params, self.grad_clip)
-            metrics_acc["actor_grad_norm"] = metrics_acc.get("actor_grad_norm", 0.0) + float(grad_norm)
-            self.actor_optimizer.step(); self.actor_optimizer.zero_grad(set_to_none=True); self.actor_lr_scheduler.step()
-            grad_norm = torch.nn.utils.clip_grad_norm_(self.critic_params, self.grad_clip)
-            metrics_acc["critic_grad_norm"] = metrics_acc.get("critic_grad_norm", 0.0) + float(grad_norm)
-            self.critic_optimizer.step(); self.critic_optimizer.zero_grad(set_to_none=True); self.critic_lr_scheduler.step()
-        log = {k: v / (self.epochs * self.grad_accumulation_steps) for k, v in metrics_acc.items() if k not in ["actor_grad_norm", "critic_grad_norm"]}
-        log.update({"actor_grad_norm": metrics_acc["actor_grad_norm"] / self.epochs, "critic_grad_norm": metrics_acc["critic_grad_norm"] / self.epochs})
+                self.engine.step()
+        log = {k: v / (self.epochs * self.grad_accumulation_steps) for k, v in metrics_acc.items()}
         return {**log, "avg_train_len": avg_len, "pct_truncated": pct_truncated, "step": self._step, "samples_seen": self._samples_seen}
 
     def _save_checkpoint(self):

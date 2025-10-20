@@ -1,4 +1,6 @@
 import ray, argparse
+from ray.util.placement_group import placement_group
+from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 from typing import Dict, Optional, Union
 
 from unstable.utils._types import TrainEnvSpec, EvalEnvSpec
@@ -22,7 +24,12 @@ def train(config: Optional[Union[Dict, str]] = 'reinforce', interface: bool = Fa
     num_collection_workers = config.get('collection_workers', 256)
     num_evaluation_workers = config.get('evaluation_workers', 16)
     # Initialization
-    ray.init(namespace=config.get('project', 'UnstableBaselines'))
+    ray.init(config.get('ray', {}).get('address', None), namespace=config.get('project', 'UnstableBaselines'))
+    learner_config = config['learner']
+    learner_gpus = learner_config.pop('num_gpus', 1)
+    learner_placement_group = placement_group(bundles=[{"GPU": 1, "CPU": 1} for _ in range(learner_gpus)], strategy="PACK")
+    ray.get(learner_placement_group.ready())
+    # Tracker
     tracker = Tracker.options(name="Tracker").remote(
         run_name=f"{config.get('run', 'Run')}", 
         wandb_project=config.get('project', 'UnstableBaselines'), wandb_config=config
@@ -54,17 +61,21 @@ def train(config: Optional[Union[Dict, str]] = 'reinforce', interface: bool = Fa
         sampling_reward_transformation=ComposeSamplingRewardTransforms([get_reward_transformation_cls(k)(**v) for k,v in reward_transformations['sampling'].items()]) if buffer_type == 'step_buffer' else ComposeEpisodeSamplingRewardTransforms([get_reward_transformation_cls(k)(**v) for k,v in reward_transformations['sampling'].items()]),
         **replay_buffer_config
     )
+    # Learning algorithm
+    learner_type = learner_config.pop('type')
+    leaners = [
+        get_learner_cls(learner_type).options(num_gpus=1, name=f"Learner-{i}", scheduling_strategy=PlacementGroupSchedulingStrategy(placement_group=learner_placement_group, placement_group_bundle_index=i)).remote(
+            **learner_config,
+            buffer=replay_buffer,
+            tracker=tracker,
+            model_registry=model_registry,
+            rank=i,
+            world_size=learner_gpus
+        ) for i in range(learner_gpus)
+    ]
     # Game Scheduler
     action_sampler_config = config['action_sampler']
     game_scheduler = GameScheduler.options(name="GameScheduler").remote(vllm_config=config['vllm_config'], tracker=tracker, buffer=replay_buffer, model_sampler=model_sampler, env_sampler=env_sampler, action_sampler=action_sampler_config.pop('type'))
-    # Learning algorithm
-    learner_config = config['learner']
-    learner = get_learner_cls(learner_config.pop('type')).options(num_gpus=1, name="Learner").remote(
-        **learner_config,
-        buffer=replay_buffer,
-        tracker=tracker,
-        model_registry=model_registry
-    )
     # Terminal Interface
     if interface: # TODO: Make non-blocking
         import asyncio; from unstable.utils.terminal_interface import TerminalInterface
@@ -73,7 +84,7 @@ def train(config: Optional[Union[Dict, str]] = 'reinforce', interface: bool = Fa
     # Run
     try:
         game_scheduler.collect.remote(num_train_workers=num_collection_workers, num_eval_workers=num_evaluation_workers)
-        ray.get(learner.train.remote(config['learner']['total_training_steps']))
+        ray.get([learner.train.remote(iterations=config['learner']['total_training_steps']) for learner in leaners])
         _, current_ckpt_lora_path = model_sampler.get_current_ckpt()
     finally: ray.kill(game_scheduler, no_restart=True); ray.shutdown()
     return current_ckpt_lora_path
@@ -84,5 +95,4 @@ if __name__ == "__main__":
     parser.add_argument("--config", type=str, default="reinforce", help="Algorithm . Either 'reinforce', 'a2c', 'ppo', 'grpo', or a path to a custom config file.")
     parser.add_argument("--interface", action="store_true", help="Enable monitoring terminal interface")
     args = parser.parse_args()
-
     train(config=args.config, interface=args.interface)

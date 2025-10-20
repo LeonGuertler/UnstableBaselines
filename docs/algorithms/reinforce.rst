@@ -30,14 +30,14 @@ REINFORCE
          && \text{(compute advantage)}
       \end{align}
    
-   [1] SPIRAL
+   [1] Liu, B., Guertler, L., Yu, S., Liu, Z., Qi, P., Balcells, D., ... & Jaques, N. (2025). SPIRAL: Self-Play on Zero-Sum Games Incentivizes Reasoning via Multi-Agent Multi-Turn Reinforcement Learning. arXiv preprint arXiv:2506.24119.
 
 Hyperparameters
 """""""""""""""
-**batch_size: int (default: 384)**
-  Number of epochs to train the policy.
-**mini_batch_size: int (default: 1)**
-  Mini batch size for the policy.
+**local_batch_size: int (default: 384)**
+  Per-GPU batch size.
+**micro_batch_size: int (default: 1)**
+  The micro batch size used during training.
 **learning_rate: float (default: 1e-5)**
   Learning rate for the policy.
 **lr_scheduler_type: str (default: "constant")**

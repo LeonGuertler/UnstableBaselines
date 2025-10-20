@@ -18,31 +18,28 @@ class REINFORCELearner(BaseLearner):
         enc = self.tokenizer(combined, return_tensors="pt", padding=True, truncation=True, max_length=self.max_train_len).to(self.device) # Tokenize with truncation
         return enc, advs, obs, avg_len, pct_truncated
 
-    def _mini_batch_update_step(self, steps, scaling: float = 1.0):
+    def _micro_batch_update_step(self, steps, scaling: float = 1.0):
         enc, advs, obs, avg_len, pct_truncated = self._prepare_batch(steps=steps)
         out = self.model(**enc)
         logp = torch.nn.functional.log_softmax(out.logits, dim=-1)
         tgt_ids = enc.input_ids[:, 1:]
         tok_logp = logp[:, :-1, :].gather(-1, tgt_ids.unsqueeze(-1)).squeeze(-1)
-        mask = torch.ones_like(enc.input_ids, dtype=torch.bool, device=self.device) # build prompt mask
+        mask = torch.ones_like(enc.input_ids, dtype=torch.bool, device=self.device)
         for i, o in enumerate(obs): mask[i, :len(self.tokenizer(o, add_special_tokens=False)["input_ids"])] = False
         mask = mask[:, 1:]
         seq_logp = (tok_logp * mask).sum(1) / self.max_generation_len
-        loss = -(advs * seq_logp).mean() / scaling
-        loss.backward()
-        torch.cuda.empty_cache()
+        loss = -(advs * seq_logp).mean()
+        self.engine.backward(loss)
         return {"loss": loss.item(), "logp_mean": seq_logp.mean().item(), "avg_train_len": avg_len, "pct_truncated": pct_truncated}
     
     def _update(self, batch):
         metrics_acc = {}
-        self.actor_optimizer.zero_grad(set_to_none=True)
         for i in range(self.grad_accumulation_steps):
-            sub = batch[i * self.mini_batch_size : (i + 1) * self.mini_batch_size]
+            sub = batch[i * self.micro_batch_size : (i + 1) * self.micro_batch_size]
             with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16): 
-                update_metrics = self._mini_batch_update_step(sub, scaling=self.grad_accumulation_steps)
+                update_metrics = self._micro_batch_update_step(sub)
             for k, v in update_metrics.items(): metrics_acc[k] = metrics_acc.get(k, 0.0) + v /  self.grad_accumulation_steps
             self.logger.info(f"Mini-step metrics: {update_metrics}")
+            self.engine.step()
         self.logger.info(f"Step metrics: {metrics_acc}")
-        torch.nn.utils.clip_grad_norm_(self.actor_params, self.grad_clip)
-        self.actor_optimizer.step()
         return metrics_acc

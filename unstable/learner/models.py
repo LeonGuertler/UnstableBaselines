@@ -44,6 +44,7 @@ def _load_lora_state(model, lora_path):
 def build_peft_model(base_name: str, device: torch.device, lora_cfg: Dict[str, Any]|None, initial_lora_path: Optional[str]=None, freeze_base: bool=True, value_head: bool=False, value_head_prefix: str="value_head") -> Tuple[torch.nn.Module, "transformers.PreTrainedTokenizer"]:
     lora_cfg = lora_cfg or {}
     base = get_actor_critic_model(base_name, device, torch_dtype=torch.bfloat16, value_head_prefix=value_head_prefix) if value_head else _load_base(base_name, torch.bfloat16, device)
+    base.config.attn_implementation = "flash_attention_2"; print(f"[build_peft_model] ✅ FlashAttention 2 enabled for {base_name}")
     if freeze_base: _freeze(base, None if not value_head else value_head_prefix)
     model = get_peft_model(base, LoraConfig(r=lora_cfg.get("lora_rank", 32), lora_alpha=lora_cfg.get("lora_alpha", 32), lora_dropout=lora_cfg.get("lora_dropout", 0.05), 
                                             bias="none", target_modules=lora_cfg.get("target_modules", ["q_proj", "k_proj", "v_proj", "o_proj"]))).to(device)

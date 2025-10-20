@@ -28,10 +28,10 @@ Hyperparameters
 
 **epochs: int (default: 2)**
   Number of epochs to train the policy.
-**batch_size: int (default: 384)**
-  Batch size for the policy.
-**mini_batch_size: int (default: 1)**
-  Mini batch size for the policy.
+**local_batch_size: int (default: 384)**
+  Per-GPU batch size.
+**micro_batch_size: int (default: 1)**
+  The micro batch size used during training.
 **learning_rate: float (default: 1e-5)**
   Learning rate for the policy.
 **lr_scheduler_type: str (default: "constant")**
@@ -46,16 +46,12 @@ Hyperparameters
   Entropy coefficient.
 **beta: float (default: 0.01)**
   Beta coefficient to weight the KL divergence to the reference model. When larger than 0.0, a referene model must be loaded.
-**infer_mini_batch_size: int (default: 4)**
+**infer_micro_batch_size: int (default: 4)**
   Batch size for inference.
 **critic_learning_rate: float (default: 1e-4)**
   Learning rate for the critic.
 **clip_value: float (default: 0.2)**
-  Clip value for the critic.
-**critic_lr_scheduler_type: str (default: "linear")**
-  Critic learning rate scheduler type.
-**critic_lr_warmup_ratio: float (default: 0.025)**
-  Critic learning rate warmup ratio.
+  Clipping value for the critic.
 **gamma: float (default: 0.99)**
   Discount factor.
 **gae_lambda: float (default: 0.95)**

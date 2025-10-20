@@ -6,8 +6,7 @@ from pathlib import Path
 sys.path.insert(0, os.path.abspath(".."))
 
 project = "UnstableBaselines"
-author = "Leon Guertler and contributors"
-copyright = "2025, Leon Guertler"
+author = "Leon Guertler, Tim Grams, Zichen Liu, and Bobby Cheng"
 
 # Keep in sync with pyproject if updated later
 release = "0.2.0"

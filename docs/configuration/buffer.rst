@@ -5,14 +5,20 @@ Replay Buffers
 We provide two replay buffers for multi-agent game collection: 
 StepBuffer stores and samples individual steps across episodes while the EpisodeBuffer stores and samples entire episodes.
 
+.. raw:: html
+
+    <div align="center">
+        <img style="width: 600px;" src="../_static/replaybuffer.png" />
+    </div>
+
 Both buffers support three kinds of reward transformations:
 
 - **Final reward transformation**: Applied once per trajectory and passed into step-level computations.
 - **Step reward transformation** Applied per step, typically using the final/episode reward.
 - **Sampling reward transformation** Applied *at sampling time* to the batch being returned.
 
-Base Interfaces
----------------
+API Reference
+"""""""""""""
 
 .. py:class:: BaseBuffer(max_buffer_size, tracker, final_reward_transformation, step_reward_transformation, sampling_reward_transformation, buffer_strategy: str = "random")
 
@@ -72,8 +78,6 @@ StepBuffer
 
    Stores steps from incoming trajectories in a single flat list and samples individual steps.
 
-   **Constructor parameters**
-
    :param max_buffer_size: Upper bound on number of stored steps. When exceeded, the buffer downsamples.
    :type max_buffer_size: int
    :param tracker: Tracker for logging.
@@ -86,14 +90,6 @@ StepBuffer
    :type sampling_reward_transformation: Optional[ComposeSamplingRewardTransforms]
    :param buffer_strategy: Downsampling policy. Currently only ``"random"`` is supported.
    :type buffer_strategy: str
-
-   **Attributes**
-
-   - ``steps`` (:class:`List[Step]`)
-   - ``training_steps``
-   - ``local_storage_dir`` (str).
-   - ``logger``
-   - ``mutex`` (:class:`threading.Lock`)
 
    **Methods**
 
@@ -143,8 +139,6 @@ EpisodeBuffer
 
    Stores entire episodes and samples batches of full episodes. 
 
-   **Constructor parameters**
-
    :param max_buffer_size: Upper bound on number of stored steps. When exceeded, the buffer downsamples.
    :type max_buffer_size: int
    :param tracker: Tracker for logging.
@@ -157,14 +151,6 @@ EpisodeBuffer
    :type sampling_reward_transformation: Optional[ComposeSamplingRewardTransforms]
    :param buffer_strategy: Downsampling policy. Currently only ``"random"`` is supported.
    :type buffer_strategy: str
-
-   **Attributes**
-
-   - ``episodes`` (:class:`List[List[Step]]`)
-   - ``training_steps`` (int), 
-   - ``local_storage_dir`` (str) 
-   - ``logger`` 
-   - ``mutex``
 
    **Methods**
 
@@ -184,25 +170,18 @@ EpisodeBuffer
 
    .. py:method:: get_batch(batch_size: int) -> List[List[Step]]
 
-      Randomly shuffles episodes and accumulates them until the **sum of step counts** is at least ``batch_size``.
-      The selected episodes are then **removed** from storage and returned.
+      Sample without replacement a set of episodes and remove them from the buffer.
 
-      If provided, ``sampling_reward_transformation`` is applied to the selected list of episodes *as a whole*.
-      (Note that an alternative, commented implementation shows how to transform flattened steps and unflatten them.)
-
-      As a side effect, a CSV dump of the **flattened** sampled episodes is written to
-      ``{local_storage_dir}/train_data_step_{training_steps}.csv``.
-
-      :param batch_size: Minimum number of steps to include across sampled episodes.
+      :param batch_size: Number of episodes to sample.
       :type batch_size: int
 
    .. py:method:: stop()
 
-      Signal to stop further collection.
+      Mark the buffer as closed to further collection. Does not clear data.
 
    .. py:method:: size() -> int
 
-      Total number of stored steps across all episodes.
+      Current number of stored steps.
 
    .. py:method:: continue_collection() -> bool
 

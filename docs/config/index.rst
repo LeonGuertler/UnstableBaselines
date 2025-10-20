@@ -26,6 +26,8 @@ For example, if you want to experiment with new curriculum learning strategies, 
 That way, youc an measure specifically the effect of the new strategy while leaving the rest of the configuration unchanged.
 
 
+You can find all default configuration files in the `unstable/config <https://www.openai.com>`_-folder.
+
 --------------------------------
 
 **unstable.config.grpo.yaml**

@@ -39,7 +39,8 @@ It queries the environment and model sampler for the next game and pushes the re
 
 **Learner.** The learner does the actual training of the large language model. 
 It fetches data from the replay buffer, computes the loss, updates the model, and registers the checkpoint.
+You can scale the learner to multiple GPUs utilizing DeepSpeed. We further speed things up with FlashAttention and mixed-precision training.
 
 **Replay Buffer.** The replay buffer stores the game interaction data. 
-Default is that steps are stored. However, we have also implemented 
-
+Default is that steps are stored. However, we have also provide an episode buffer that returns full episodes for training.
+In the future, we envision different prioritization strategies to sample important experiences more frequently.

@@ -2,7 +2,7 @@
 <div align="center">
 <picture>
   <source media="(prefers-color-scheme: light)" srcset="docs/_static/slogan_logo.png">
-  <img alt="UnstableBaselines logo" src="docs/_static/slogan_logo.png" width="80%" height="80%">
+  <img alt="UnstableBaselines logo" src="docs/_static/sloganlogo.png" width="80%" height="80%">
 </picture>
 
 
@@ -40,25 +40,7 @@ You can use our PyPi-package:
 ```bash
 pip3 install unstable-rl
 ```
-and import the modules: 
-```python
-from unstable import train, get_algorithm_config
-
-class MyModelSampler(BaseModelSampler):
-    ...
-
-config = get_algorithm_config("reinforce")
-config['learner']['learning_rate'] = 1e-5
-config['learner']['grad_clip'] = 0.2
-config['replay_buffer']['max_buffer_size'] = 800
-config['model_sampler']['type'] = MyModelSampler
-checkpoint_path = train(config)
-```
-or clone the repository:
-```bash
-git clone https://github.com/LeonGuertler/UnstableBaselines.git
-```
-and run it from the command-line interface:
+and run Unstable Baselines from the command-line interface:
 ```bash
 python -m unstable.train --config ppo
 ```

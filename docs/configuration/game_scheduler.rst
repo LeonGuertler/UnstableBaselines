@@ -17,8 +17,6 @@ API Reference
    :module: unstable.collection.game_scheduler
    :noindex:
 
-   **Constructor parameters**
-
    :param vllm_config: Configuration passed to each :class:`VLLMActor` (see section **vLLM Configuration** below).
    :type vllm_config: Mapping[str, Any]
    :param tracker: Actor that provides logging and weights and biases integration.
@@ -43,16 +41,6 @@ API Reference
       :param num_eval_workers: Maximum number of concurrent evaluation episodes.
                                If ``None``, no evaluation episodes are scheduled.
       :type num_eval_workers: Optional[int]
-
-   .. rubric:: Internal helpers
-
-   .. py:method:: _launch_jobs(max_train: int, max_eval: Optional[int])
-   .. py:method:: _handle_finished_job(ref)
-   .. py:method:: _next_train_job()
-   .. py:method:: _post_train(meta: TaskMeta, game_information: GameInformation, player_trajs: List[PlayerTrajectory])
-   .. py:method:: _next_eval_job()
-   .. py:method:: _post_eval(meta: TaskMeta, game_information: GameInformation)
-
 
 vLLM Configuration
 """"""""""""""""""
