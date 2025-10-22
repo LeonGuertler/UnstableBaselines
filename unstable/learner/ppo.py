@@ -67,6 +67,18 @@ class PPOLearner(BaseLearner):
             entropy     = self._masked_mean(tok_entropy, response_mask)
         return tok_logp, entropy
 
+    def generalized_advantage_estimation(self, rewards, values, response_mask):
+        advantages = torch.zeros(values.shape[0], values.shape[1], device=self.device)
+        for i in range(len(advantages)):
+            action_inds = torch.where(response_mask[i])[0]
+            lastgaelam = 0
+            for t in reversed(action_inds):
+                nextvalues = values[i, t + 1] if t < action_inds[-1] else 0.0
+                delta = rewards[i, t] + self.gamma* nextvalues - values[i, t]
+                lastgaelam = delta + self.gamma * self.gae_lambda * lastgaelam
+                advantages[i, t] = lastgaelam
+        return advantages
+
     def _mini_batch_update_step(self, input_ids, attention_mask, response_mask, logps, returns, values, advantages, logps_ref) -> Dict[str, float]:
         # Policy Update
         self.model.set_adapter(self.model.actor_adapter_name)
@@ -90,8 +102,8 @@ class PPOLearner(BaseLearner):
         value_loss = value_loss * self.value_loss_coeff
         self.engine.backward(value_loss)
         return {
-            "policy_loss": policy_loss.item(),
-            "value_loss": value_loss.item(),
+            "policy_loss": policy_loss.item() / self.grad_accumulation_steps,
+            "value_loss": value_loss.item() / self.grad_accumulation_steps,
             "ratio": self._masked_mean(ratio, response_mask).item(),
             "kl": kl.item() if self.beta > 0.0 else 0.0,
             "entropy": entropy.item(),
@@ -102,6 +114,7 @@ class PPOLearner(BaseLearner):
 
     def _update(self, batch):
         all_steps = tree.flatten(batch)
+        # Fetch values, behavior and reference logps
         input_ids, attention_mask, response_mask, avg_len, pct_truncated = self._prepare_batch(all_steps)
         logps = torch.zeros(input_ids.shape[0], input_ids.shape[1]-1, device=self.device)
         values = torch.zeros(input_ids.shape[0], input_ids.shape[1]-1, device=self.device)
@@ -122,15 +135,7 @@ class PPOLearner(BaseLearner):
         # GAE
         rewards = torch.zeros(values.shape[0], values.shape[1], device=self.device)
         for i in range(len(all_steps)): rewards[i, torch.where(response_mask[i])[0][-1]] = all_steps[i].reward
-        advantages = torch.zeros(values.shape[0], values.shape[1], device=self.device)
-        for i in range(len(advantages)):
-            action_inds = torch.where(response_mask[i])[0]
-            lastgaelam = 0
-            for t in reversed(action_inds):
-                nextvalues = values[i, t + 1] if t < action_inds[-1] else 0.0
-                delta = rewards[i, t] + self.gamma* nextvalues - values[i, t]
-                lastgaelam = delta + self.gamma * self.gae_lambda * lastgaelam
-                advantages[i, t] = lastgaelam
+        advantages = self.generalized_advantage_estimation(rewards, values, response_mask)
         returns = advantages + values 
         # Training loop
         metrics_acc: Dict[str, float] = {}

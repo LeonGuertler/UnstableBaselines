@@ -24,7 +24,8 @@ class GRPOLearner(BaseLearner):
         self.inference_micro_batch_size = inference_micro_batch_size
 
     def _prepare_batch(self, steps: List) -> tuple:
-        obs, acts = zip(*[(s.obs, s.act)for s in steps])
+        obs, acts, advs = zip(*[(s.obs, s.act, s.reward)for s in steps])
+        advs = torch.tensor(advs, dtype=torch.float32, device=self.device)
         combined  = [o + a for o, a in zip(obs, acts)]
         lengths   = [len(self.tokenizer(text, add_special_tokens=False)["input_ids"]) for text in combined]
         avg_len   = sum(lengths) / len(lengths)
@@ -35,7 +36,7 @@ class GRPOLearner(BaseLearner):
             prompt_len = len(self.tokenizer(text, add_special_tokens=False)["input_ids"])
             response_mask[i, :prompt_len] = False
         response_mask = response_mask[:, 1:]
-        return enc.input_ids, enc.attention_mask, response_mask, avg_len, pct_truncated
+        return enc.input_ids, advs, enc.attention_mask, response_mask, avg_len, pct_truncated
 
     def _get_logps(self, input_ids, attention_mask, response_mask, compute_entropy: bool=False):
         out = self.engine(input_ids=input_ids, attention_mask=attention_mask)
@@ -65,18 +66,17 @@ class GRPOLearner(BaseLearner):
             total_loss += self.beta * kl
         self.engine.backward(total_loss)
         return {
-            "policy_loss": policy_loss.item(),
+            "policy_loss": policy_loss.item() / self.grad_accumulation_steps,
             "kl": kl.item() if self.beta > 0.0 else 0.0,
             "ratio": self._masked_mean(ratio, response_mask).item(),
             "entropy": entropy.item(),
-            "logp_mean": self._masked_mean(new_logps, response_mask).item(),
-            "logp_std": self._masked_std(new_logps, response_mask).item()
+            "seq_logp_mean": ((new_logps * response_mask).sum(dim=1) / self.max_generation_len).mean().item()
         }
 
     def _update(self, batch):
         all_steps = tree.flatten(batch)
-        self.model.set_adapter(self.model.actor_adapter_name)
-        input_ids, attention_mask, response_mask, avg_len, pct_truncated = self._prepare_batch(all_steps)
+        # Fetch behavior and reference logps
+        input_ids, advantages, attention_mask, response_mask, avg_len, pct_truncated = self._prepare_batch(all_steps)
         logps = torch.zeros(input_ids.shape[0], input_ids.shape[1]-1, device=self.device)
         if self.beta > 0.0: logps_ref = torch.zeros(input_ids.shape[0], input_ids.shape[1]-1, device=self.device)
         for i in range(0, input_ids.shape[0], self.inference_micro_batch_size):
@@ -88,8 +88,6 @@ class GRPOLearner(BaseLearner):
                     with self.model.disable_adapter():
                         mb_logps_ref = self._get_logps(mb_input_ids, mb_attention_mask, response_mask[i : i + self.inference_micro_batch_size])[0]
                     logps_ref[i : i + self.inference_micro_batch_size] = mb_logps_ref
-        advantages = torch.zeros(logps.shape[0], logps.shape[1], device=self.device)
-        for i in range(len(all_steps)): advantages[i, torch.where(response_mask[i])[0]] = all_steps[i].reward
         # Training loop
         metrics_acc: Dict[str, float] = {}
         for _ in range(self.epochs):
@@ -101,8 +99,8 @@ class GRPOLearner(BaseLearner):
                 if self.beta > 0.0: mb_logps_ref = logps_ref[mb_idx]
                 else: mb_logps_ref = None
                 update_metrics = self._micro_batch_update_step(mb_input_ids, mb_attention_mask, mb_response_mask, mb_logps, mb_advantages, mb_logps_ref)
-                for k, v in update_metrics.items(): metrics_acc[k] = metrics_acc.get(k, 0.0) + v
+                for k, v in update_metrics.items(): metrics_acc[k] = metrics_acc.get(k, 0.0) + v / self.grad_accumulation_steps
                 self.logger.info(f"Mini-step metrics: {update_metrics}")
                 self.engine.step()
-        log = {k: v / (self.epochs * self.grad_accumulation_steps) for k, v in metrics_acc.items()}
+        log = {k: v / (self.epochs) for k, v in metrics_acc.items()}
         return {**log, "avg_train_len": avg_len, "pct_truncated": pct_truncated, "step": self._step}

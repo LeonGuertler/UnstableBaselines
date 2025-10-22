@@ -75,8 +75,9 @@ class BaseLearner:
         else: 
             while not bool(_internal_kv_exists("learner/master_node", namespace="")): time.sleep(1)
             master_node = json.loads(_internal_kv_get("learner/master_node", namespace="").decode("utf-8"))
-        os.environ["MASTER_ADDR"] = master_node['address']; os.environ["MASTER_PORT"] = str(master_node['port'])
-        deepspeed.init_distributed(dist_backend="nccl", rank=rank, world_size=world_size)
+        os.environ["MASTER_ADDR"] = master_node['address']; os.environ["MASTER_PORT"] = str(master_node['port']); 
+        os.environ['RANK'] = str(rank); os.environ['LOCAL_RANK'] = '0'; os.environ['WORLD_SIZE'] = str(world_size)
+        deepspeed.init_distributed(dist_backend="nccl", rank=rank, world_size=world_size, auto_mpi_discovery=False)
         self.engine, self.actor_optimizer, _, self.actor_lr_scheduler = deepspeed.initialize(
             model=model,
             optimizer=self.optimizer,
