@@ -80,6 +80,7 @@ class BaseLearner:
         deepspeed.init_distributed(dist_backend="nccl", rank=rank, world_size=world_size, auto_mpi_discovery=False)
         self.engine, self.actor_optimizer, _, self.actor_lr_scheduler = deepspeed.initialize(
             model=model,
+            model_parameters=params,
             optimizer=self.optimizer,
             lr_scheduler=self.lr_scheduler,
             config={
@@ -87,9 +88,9 @@ class BaseLearner:
                 "train_micro_batch_size_per_gpu": self.micro_batch_size,
                 "gradient_accumulation_steps": self.grad_accumulation_steps,
                 "gradient_clipping": self.grad_clip,
-                "zero_optimization": zero_optimization if zero_optimization is not None else {"stage": 0},
+                "zero_optimization": zero_optimization if zero_optimization is not None else {"stage": 1},
                 "bf16": {"enabled": True},
-                "fp16": {"enabled": False},
+                "prescale_gradients": False,
                 "steps_per_print": 100
             }
         )
@@ -114,7 +115,7 @@ class BaseLearner:
                 if self.rank == 0:
                     t /= self.world_size
                     log = dict(zip(accumulated_metrics.keys(), t.tolist()))
-                    log.update({"step": self._step,  "samples_seen": int(total_samples.item()), "lr": self.optimizer.param_groups[0]["lr"]})
+                    log.update({"step": self._step, "grad_norm": accumulated_metrics.get("grad_norm", 0.0), "samples_seen": int(total_samples.item()), "lr": self.optimizer.param_groups[0]["lr"]})
                     self.tracker.log_learner.remote(log)
                      
                     # Save & register the updated checkpoint

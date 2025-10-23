@@ -1,4 +1,6 @@
 import ray, torch
+from deepspeed.utils import safe_get_full_grad
+
 from unstable.learner.base import BaseLearner
 
 @ray.remote
@@ -36,10 +38,10 @@ class REINFORCELearner(BaseLearner):
         metrics_acc = {}
         for i in range(self.grad_accumulation_steps):
             sub = batch[i * self.micro_batch_size : (i + 1) * self.micro_batch_size]
-            with torch.autocast(device_type=self.device.type, dtype=torch.bfloat16): 
-                update_metrics = self._micro_batch_update_step(sub)
+            update_metrics = self._micro_batch_update_step(sub)
             for k, v in update_metrics.items(): metrics_acc[k] = metrics_acc.get(k, 0.0) + v /  self.grad_accumulation_steps
             self.logger.info(f"Mini-step metrics: {update_metrics}")
+            if self.engine.is_gradient_accumulation_boundary(): self.logger.info(f'Grad Norm: {sum(safe_get_full_grad(p).norm(2).cpu()**2 for p in self.model.parameters() if safe_get_full_grad(p) is not None) ** 0.5}')
             self.engine.step()
         self.logger.info(f"Step metrics: {metrics_acc}")
         return metrics_acc
