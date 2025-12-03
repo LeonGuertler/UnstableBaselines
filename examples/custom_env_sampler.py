@@ -1,6 +1,6 @@
 from unstable.train import train
 from unstable.utils.templates import get_algorithm_config
-from unstable.collection.env_samplers import UniformRandomEnvSampler
+from unstable.collection.env_samplers import UniformRandomEnvSampler # Replace with your own custom sampler
 
 
 if __name__ == "__main__":

@@ -31,11 +31,11 @@ class BaseTracker:
 @ray.remote
 class Tracker(BaseTracker): 
     FLUSH_EVERY = 64
-    def __init__(self, run_name: str, wandb_project: Optional[str]=None, wandb_config: Optional[Dict]=None):
+    def __init__(self, run_name: str, wandb_project: Optional[str]=None, wandb_id: Optional[str]=None, wandb_config: Optional[Dict]=None):
         super().__init__(run_name=run_name)
         self.logger = setup_logger("tracker", self.get_log_dir())
         self.use_wandb = False
-        if wandb_project: wandb.init(project=wandb_project, name=run_name, config=wandb_config); self.use_wandb = True; wandb.define_metric("*", step_metric="learner/step")
+        if wandb_project: wandb.init(project=wandb_project, name=run_name, config=wandb_config, id=wandb_id, resume="must" if wandb_id else None); self.use_wandb = True; wandb.define_metric("*", step_metric="learner/step")
         self._m: Dict[str, collections.deque] = collections.defaultdict(lambda: collections.deque(maxlen=512))
         self._buffer: Dict[str, Scalar] = {}
         self._n = {}
@@ -61,7 +61,7 @@ class Tracker(BaseTracker):
             self._put(f"collection-{env_id}/Reward (pid={traj.pid})", reward)
             self._put(f"collection-{env_id}/Game Length", traj.num_turns)
             for idx in range(len(traj.obs)):
-                self._put(f"collection-{env_id}/Respone Length (char)", len(traj.actions[idx]))
+                self._put(f"collection-{env_id}/Respone Length (char)", len(traj.completions[idx]))
                 self._put(f"collection-{env_id}/Observation Length (char)", len(traj.obs[idx]))
                 for k, v in traj.format_feedbacks[idx].items(): self._put(f"collection-{env_id}/Format Success Rate - {k}", v)
             self._n[f"collection-{env_id}"] = self._n.get(f"collection-{env_id}", 0) + 1

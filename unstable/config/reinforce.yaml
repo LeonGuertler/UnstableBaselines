@@ -1,6 +1,6 @@
 run: "default"
-project: "UB-Benchmarking"
-model_name: &model_name "Qwen/Qwen3-4B-Base"
+project: "Test"
+model_name: &model_name "Qwen/Qwen3-1.7B-Base"
 collection_workers: 384
 evaluation_workers: 0
 logging_dir: "outputs"
@@ -10,16 +10,17 @@ checkpoint:
   uid: "base"
   path: null
   iteration: 0
+  wandb_id: null
 
 env_sampler:
   type: "random"
   train:
-    - id: "SimpleTak-v0-train"
+    - id: "ConnectFour-v0-train"
       num_players: 2
       num_actors: 2
       prompt_template: "qwen3-zs"
   eval:
-    - id: "SimpleTak-v0-train"
+    - id: "ConnectFour-v0-train"
       num_players: 2
       prompt_template: "qwen3-zs"
 
@@ -40,7 +41,7 @@ learner:
   model_name: *model_name
   local_batch_size: 384
   micro_batch_size: 1
-  learning_rate: 0.00001
+  learning_rate: 0.000001
   lr_scheduler_type: "constant"
   lr_warmup_ratio: 0.01
   grad_clip: 0.2
@@ -82,7 +83,7 @@ vllm_config:
   model_name: *model_name
   temperature: 0.6
   max_tokens: *max_generation_len
-  max_parallel_seq: 128
+  max_parallel_seq: 156
   max_loras: 8
   max_model_len: 8192
   lora_config: *lora_cfg

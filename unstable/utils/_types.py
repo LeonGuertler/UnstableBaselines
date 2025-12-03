@@ -4,17 +4,24 @@ from typing import List, Dict, Optional
 
 
 @dataclass
-class Action:
-    extracted_action: str
-    raw: Optional[str]
+class ActionSample:
+    action: str
+    prompt: Optional[str]
+    prompt_ids: Optional[List[int]]
+    completion: Optional[str]
+    completion_ids: Optional[List[int]]
     format_feedback: Optional[Dict]
     sampler_info: Optional[Dict]
 
 @dataclass
 class Step:
     pid: int
-    obs: str 
-    act: str
+    obs: str
+    prompt: str
+    prompt_ids: List[int]
+    completion: str
+    completion_ids: List[int]
+    completion_logprobs: Optional[List[float]]
     reward: float
     env_id: str
     step_info: Optional[Dict]
@@ -24,8 +31,12 @@ class PlayerTrajectory:
     pid:                int = field(default_factory=int)
     final_reward:       float = field(default_factory=float)
     obs:                List[str] = field(default_factory=list)
-    actions:            List[str] = field(default_factory=list)
-    extracted_actions:  List[str] = field(default_factory=list)
+    prompts:            List[str] = field(default_factory=list)
+    prompt_ids:          List[List[int]] = field(default_factory=list)
+    completions:            List[str] = field(default_factory=list)
+    completion_ids:        List[List[int]] = field(default_factory=list)
+    completion_logprobs:    List[List[float]] = field(default_factory=list)
+    actions:  List[str] = field(default_factory=list)
     format_feedbacks:   List[Dict] = field(default_factory=list)
     step_infos:         List[Dict] = field(default_factory=list)
     game_info:          Dict = field(default_factory=dict)
@@ -34,20 +45,21 @@ class PlayerTrajectory:
 
 @dataclass
 class GameInformation:
-    game_idx:           int = field(default_factory=int)
-    env_id:             str = field(default_factory=str)
-    pid:                List[int] = field(default_factory=list)
-    obs:                List[str] = field(default_factory=list)
-    full_actions:       List[str] = field(default_factory=list)
-    extracted_actions:  List[str] = field(default_factory=list)
-    step_infos:         List[Dict] = field(default_factory=list)
-    action_info:        Dict = field(default_factory=dict)
-    game_info:          Dict = field(default_factory=dict)
-    final_rewards:      Dict[int, float] = field(default_factory=dict)
-    num_turns:          int = field(default_factory=int)
-    names:              Dict[int, str] = field(default_factory=dict)
-    eval_model_pid:     Optional[int] = None
-    eval_opponent_name: Optional[str] = None
+    game_idx:               int = field(default_factory=int)
+    env_id:                 str = field(default_factory=str)
+    pid:                    List[int] = field(default_factory=list)
+    obs:                    List[str] = field(default_factory=list)
+    prompts:                List[str] = field(default_factory=list)
+    completions:            List[str] = field(default_factory=list)
+    actions:                List[str] = field(default_factory=list)
+    step_infos:             List[Dict] = field(default_factory=list)
+    action_info:            Dict = field(default_factory=dict)
+    game_info:              Dict = field(default_factory=dict)
+    final_rewards:          Dict[int, float] = field(default_factory=dict)
+    num_turns:              int = field(default_factory=int)
+    names:                  Dict[int, str] = field(default_factory=dict)
+    eval_model_pid:         Optional[int] = None
+    eval_opponent_name:     Optional[str] = None
 
 @dataclass 
 class AgentSpec:
@@ -66,6 +78,7 @@ class GameSpec:
     env_id: str
     seed: int
     agent_specs: List[AgentSpec]
+    error_allowance: int = 0
     eval_model_pid: Optional[int] = None
     eval_opponent_name: Optional[str] = None
 
@@ -89,7 +102,6 @@ class EvalEnvSpec:
     prompt_template: str
     action_extraction_fn: str = "default"
     fixed_opponent: str = "google/gemini-2.0-flash-lite-001"
-    # forced_pid: Optional[List] = None # whether to force a specific pid for the collection models
 
 @dataclass
 class ModelMeta:

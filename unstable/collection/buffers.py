@@ -43,7 +43,7 @@ class StepBuffer(BaseBuffer):
         for idx in range(len(player_traj.obs)):
             step_reward = self.step_reward_transformation(player_traj=player_traj, step_index=idx, reward=reward) if self.step_reward_transformation else reward
             with self.mutex: 
-                self.steps.append(Step(pid=player_traj.pid, obs=player_traj.obs[idx], act=player_traj.actions[idx], reward=step_reward, env_id=env_id, step_info={"raw_reward": player_traj.final_reward, "env_reward": reward, "step_reward": step_reward}))
+                self.steps.append(Step(pid=player_traj.pid, obs=player_traj.obs[idx], prompt=player_traj.prompts[idx], prompt_ids=player_traj.prompt_ids[idx], completion=player_traj.completions[idx], completion_ids=player_traj.completion_ids[idx], completion_logprobs=player_traj.completion_logprobs[idx], reward=step_reward, env_id=env_id, step_info={"raw_reward": player_traj.final_reward, "env_reward": reward, "step_reward": step_reward}))
         self.logger.info(f"Buffer size: {len(self.steps)}, added {len(player_traj.obs)} steps")
         # downsample if necessary
         excess_num_samples = max(0, len(self.steps) - self.max_buffer_size); self.logger.info(f"Excess Num Samples: {excess_num_samples}")
@@ -100,7 +100,7 @@ class EpisodeBuffer(BaseBuffer):
         reward = self.final_reward_transformation(reward=player_traj.final_reward, pid=player_traj.pid, env_id=env_id) if self.final_reward_transformation else player_traj.final_reward
         for idx in range(len(player_traj.obs)):
             step_reward = self.step_reward_transformation(player_traj=player_traj, step_index=idx, reward=reward) if self.step_reward_transformation else reward
-            episode.append(Step(pid=player_traj.pid, obs=player_traj.obs[idx], act=player_traj.actions[idx], reward=step_reward, env_id=env_id, step_info={"raw_reward": player_traj.final_reward, "env_reward": reward, "step_reward": step_reward}))
+            episode.append(Step(pid=player_traj.pid, obs=player_traj.obs[idx], completion=player_traj.completions[idx], completion_logprobs=player_traj.completion_logprobs[idx], reward=step_reward, env_id=env_id, step_info={"raw_reward": player_traj.final_reward, "env_reward": reward, "step_reward": step_reward}))
         if len(episode) > 0:
             with self.mutex:
                 self.episodes.append(episode)

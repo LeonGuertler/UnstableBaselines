@@ -4,7 +4,9 @@ from typing import Optional, Dict, Any, Callable, Tuple
 from pathlib import Path
 
 import ray
-from vllm import EngineArgs, LLMEngine, SamplingParams
+from vllm.engine.arg_utils import EngineArgs
+from vllm.engine.llm_engine import LLMEngine
+from vllm.sampling_params import SamplingParams
 from vllm.lora.request import LoRARequest
 
 from unstable.utils.logging import setup_logger
@@ -20,14 +22,14 @@ class VLLMActor:
         engine_args = EngineArgs(
             model=cfg["model_name"], enable_lora=True, max_loras=cfg["max_loras"], max_lora_rank=cfg["lora_config"]["lora_rank"], 
             max_cpu_loras=cfg["max_loras"], max_num_seqs=cfg["max_parallel_seq"], task="generate", max_model_len=cfg["max_model_len"],
-            disable_custom_all_reduce=True, enforce_eager=False, disable_log_stats=True,  # Reduce logging overhead
+            disable_custom_all_reduce=True, enforce_eager=True, disable_log_stats=True
         )
         try: self.engine = LLMEngine.from_engine_args(engine_args); self.logger.info("VLLM engine initialized successfully")
         except Exception as e: self.logger.error(f"VLLM engine initialization failed: {e}"); raise
         self.logger.info(f"vLLM model path or name: {engine_args.model}")
         self.logger.info(f"Model architecture: {self.engine.model_config.__dict__}")
             
-        self.sampling_params = SamplingParams(temperature=cfg.get("temperature", 0.7), top_p=cfg.get("top_p", 0.95), max_tokens=cfg.get("max_tokens", 4096))
+        self.sampling_params = SamplingParams(temperature=cfg.get("temperature", 0.7), top_p=cfg.get("top_p", 0.95), max_tokens=cfg.get("max_tokens", 4096), logprobs=1, prompt_logprobs=True)
 
         self._queue = deque()
         self._futures = {}
@@ -101,7 +103,6 @@ class VLLMActor:
                     req_id = out.request_id
                     lora = self._req2lora.get(req_id, "base")
                     segment = out.outputs[-1]
-
                     tok_ids = getattr(segment, "token_ids", None) or []
                     prev = self._prev_tok_cnt[req_id]
                     new_tok = max(0, len(tok_ids) - prev)
@@ -111,9 +112,12 @@ class VLLMActor:
                     for _ in range(new_tok): 
                         self._tok_hist.append(now)
                     if segment.finish_reason is not None:
+                        logprobs = [lp[tok].logprob for tok, lp in zip(segment.token_ids, segment.logprobs)]
+                        prompt_logprobs = [lp[tok].logprob for tok, lp in zip(out.prompt_token_ids, out.prompt_logprobs) if lp is not None]
+                        logprobs = prompt_logprobs + logprobs
                         fut = self._futures.pop(req_id, None)
                         if fut and not fut.done():
-                            fut.set_result(segment.text)
+                            fut.set_result((segment.text, logprobs, out.prompt_token_ids, tok_ids))
                         self._running -= 1
                         self._req2lora.pop(req_id, None)
                         self._prev_tok_cnt.pop(req_id, None)
@@ -142,11 +146,11 @@ class CallableActorWrapper:
         self._actor, self._lora, self._fmt, self._extract = actor, lora_path, obs_fmt_fn, extract_fn
 
     def __call__(self, observation: str) -> str: 
-        _, extracted, _, _ = self.act_full(observation)
+        _, extracted, _, _, _ = self.act_full(observation)
         return extracted
 
     def act_full(self, observation: str) -> Tuple[str, str, str, dict]:
         prompt = self._fmt(observation=observation)
-        raw = ray.get(self._actor.submit_prompt.remote(prompt=prompt, lora_path=self._lora))
+        raw, logprobs, prompt_input_ids, completion_input_ids = ray.get(self._actor.submit_prompt.remote(prompt=prompt, lora_path=self._lora))
         extracted, format_feedback = self._extract(raw_action=raw)
-        return raw, extracted, prompt, format_feedback
+        return raw, extracted, prompt, format_feedback, logprobs, prompt_input_ids, completion_input_ids

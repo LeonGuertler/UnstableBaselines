@@ -3,7 +3,7 @@ import ray, torch
 from unstable.learner.base import BaseLearner
 
 @ray.remote
-class REINFORCELearner(BaseLearner):
+class REINFORCEAsyncLearner(BaseLearner):
     def __init__(self, max_train_len: int, max_generation_len: int, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.max_train_len = max_train_len
@@ -14,13 +14,13 @@ class REINFORCELearner(BaseLearner):
         out = self.engine(input_ids=input_ids, attention_mask=attention_mask)
         logp = torch.nn.functional.log_softmax(out.logits, dim=-1)
         tok_logp = logp[:, :-1, :].gather(-1, input_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
-        vllm_kl_seq = self._masked_mean(torch.exp(vllm_logprobs - tok_logp) - (vllm_logprobs - tok_logp) - 1, response_mask, axis=1)
-        vllm_kl_mask = (vllm_kl_seq <= 0.5).float()
-        if self._masked_mean(vllm_kl_seq, response_mask).item() > 0.5: self.logger.info(f"High KL divergence detected: {vllm_kl_seq.mean().item()}")
         seq_logp = (tok_logp * response_mask).sum(1) / self.max_generation_len
-        loss = -(vllm_kl_mask * advs * seq_logp).mean()
+        vllm_kl_seq = self._masked_mean(torch.exp(vllm_logprobs - tok_logp) - (vllm_logprobs - tok_logp) - 1, response_mask, axis=1)
+        vllm_seq_logp = (vllm_logprobs * response_mask).sum(1) / self.max_generation_len
+        ratio = torch.exp(seq_logp - vllm_seq_logp)
+        loss = -(advs * ratio).mean()
         self.engine.backward(loss)  
-        return {"loss": loss.item() / self.grad_accumulation_steps, "seq_logp_mean": seq_logp.mean().item(), "avg_train_len": sum(lengths) / len(lengths), "pct_truncated": pct_truncated, "vllm_kl_seq": vllm_kl_seq.mean().item(), "vllm_kl_truncated": (sum((vllm_kl_seq > 0.5).long()) / len(vllm_kl_mask)).item()}
+        return {"loss": loss.item() / self.grad_accumulation_steps, "seq_logp_mean": seq_logp.mean().item(), "vllm_seq_logp_mean": vllm_seq_logp.mean().item(), "avg_train_len": sum(lengths) / len(lengths), "pct_truncated": pct_truncated, "offpolicy_ratio": ratio.mean().item(), "vllm_kl_seq": vllm_kl_seq.mean().item()}
     
     def _update(self, batch):
         from deepspeed.utils import safe_get_full_grad

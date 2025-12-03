@@ -39,20 +39,6 @@ class PPOLearner(BaseLearner):
         num_critic_optimizer_steps = int(self.total_training_steps * self.epochs)
         self.critic_lr_scheduler = get_scheduler(critic_lr_scheduler_type, self.critic_optimizer, num_warmup_steps=int(critic_lr_warmup_ratio * num_critic_optimizer_steps), num_training_steps=num_critic_optimizer_steps)
 
-    def _prepare_batch(self, steps: List) -> tuple:
-        obs, acts = zip(*[(s.obs, s.act)for s in steps])
-        combined  = [o + a for o, a in zip(obs, acts)]
-        lengths   = [len(self.tokenizer(text, add_special_tokens=False)["input_ids"]) for text in combined]
-        avg_len   = sum(lengths) / len(lengths)
-        pct_truncated = (sum(l > self.max_train_len for l in lengths) / len(lengths) if self.max_train_len else 0.0)
-        enc = self.tokenizer(combined, return_tensors="pt", padding=True, truncation=True, max_length=self.max_train_len).to(self.device)
-        response_mask = enc.attention_mask.bool().clone()
-        for i, text in enumerate(obs):
-            prompt_len = len(self.tokenizer(text, add_special_tokens=False)["input_ids"])
-            response_mask[i, :prompt_len] = False
-        response_mask = response_mask[:, 1:]
-        return enc.input_ids, enc.attention_mask, response_mask, avg_len, pct_truncated
-
     def _get_logps(self, input_ids, attention_mask, response_mask, compute_entropy: bool=False):
         out = self.engine(input_ids=input_ids, attention_mask=attention_mask)
         logits = out.logits[:, :-1, :]
@@ -113,13 +99,12 @@ class PPOLearner(BaseLearner):
         }
 
     def _update(self, batch):
-        all_steps = tree.flatten(batch)
         # Fetch values, behavior and reference logps
-        input_ids, attention_mask, response_mask, avg_len, pct_truncated = self._prepare_batch(all_steps)
+        input_ids, advantages, vllm_logprobs, lengths, attention_mask, response_mask, pct_truncated = self._prepare_batch(steps=batch)
         logps = torch.zeros(input_ids.shape[0], input_ids.shape[1]-1, device=self.device)
         values = torch.zeros(input_ids.shape[0], input_ids.shape[1]-1, device=self.device)
         if self.beta > 0.0: logps_ref = torch.zeros(input_ids.shape[0], input_ids.shape[1]-1, device=self.device)
-        for i in range(0, len(all_steps), self.mini_batch_size):
+        for i in range(0, len(batch), self.mini_batch_size):
             mb_input_ids, mb_attention_mask = input_ids[i : i + self.mini_batch_size], attention_mask[i : i + self.mini_batch_size]
             with torch.no_grad():
                 self.model.set_adapter(self.model.actor_adapter_name)
@@ -132,9 +117,9 @@ class PPOLearner(BaseLearner):
                     with self.model.disable_adapter():
                         mb_logps_ref = self._get_logps(mb_input_ids, mb_attention_mask, response_mask[i : i + self.mini_batch_size])[0]
                     logps_ref[i : i + self.mini_batch_size] = mb_logps_ref
-        # GAE
+        # Generalized Advantage Estimation
         rewards = torch.zeros(values.shape[0], values.shape[1], device=self.device)
-        for i in range(len(all_steps)): rewards[i, torch.where(response_mask[i])[0][-1]] = all_steps[i].reward
+        for i in range(len(batch)): rewards[i, torch.where(response_mask[i])[0][-1]] = all_steps[i].reward
         advantages = self.generalized_advantage_estimation(rewards, values, response_mask)
         returns = advantages + values 
         # Training loop

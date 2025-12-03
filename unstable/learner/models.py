@@ -2,7 +2,7 @@ import torch
 from typing import Dict, Any, Optional, Tuple
 from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig, AutoModel
 from peft.tuners.lora import LoraLayer
-from peft import LoraConfig, get_peft_model
+from peft import LoraConfig, get_peft_model, PeftModel
 try:                from torch.utils.checkpoint import CheckpointImpl
 except ImportError: from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import CheckpointImpl
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import checkpoint_wrapper, apply_activation_checkpointing
@@ -30,33 +30,35 @@ def get_actor_critic_model(pretrain_or_model: str, device: torch.device, torch_d
     value_head.weight.data.normal_(mean=0.0, std=1 / (config.hidden_size + 1))
     return model
 
-def _load_base(name: str, dtype, device, **kwargs): 
-    with torch.device(device): return AutoModelForCausalLM.from_pretrained(name, torch_dtype=dtype, trust_remote_code=True, **kwargs)
-
 def _freeze(model, ignore_substr: Optional[str] = None):
     for n, p in model.named_parameters():
         if ignore_substr and ignore_substr in n: continue
         p.requires_grad_(False)
 
-def _load_lora_state(model, lora_path):
-    pass
+def _load_lora_state(model, lora_path: str):
+    adapter_name = getattr(model, "actor_adapter_name", "default")
+    model.load_adapter(lora_path, adapter_name=adapter_name, is_trainable=True)
+    model.set_adapter(adapter_name)
+    print(f"[build_peft_model] ✅ Loaded LoRA adapter '{adapter_name}' from {lora_path}")
 
-def build_peft_model(base_name: str, device: torch.device, lora_cfg: Dict[str, Any]|None, initial_lora_path: Optional[str]=None, freeze_base: bool=True, value_head: bool=False, value_head_prefix: str="value_head") -> Tuple[torch.nn.Module, "transformers.PreTrainedTokenizer"]:
+def build_peft_model(base_name: str, device: torch.device, lora_cfg: Dict[str, Any]|None, checkpoint_cfg: Dict[str, Any]|None, freeze_base: bool=True, value_head: bool=False, value_head_prefix: str="value_head") -> Tuple[torch.nn.Module, "transformers.PreTrainedTokenizer"]:
     lora_cfg = lora_cfg or {}
-    base = get_actor_critic_model(base_name, device, torch_dtype=torch.bfloat16, value_head_prefix=value_head_prefix) if value_head else _load_base(base_name, torch.bfloat16, device)
+    if value_head: base = get_actor_critic_model(base_name, device, torch_dtype=torch.bfloat16, value_head_prefix=value_head_prefix)  
+    else: 
+        with torch.device(device): base = AutoModelForCausalLM.from_pretrained(base_name, torch_dtype=torch.bfloat16, trust_remote_code=True)
     base.config.attn_implementation = "flash_attention_2"; print(f"[build_peft_model] ✅ FlashAttention 2 enabled for {base_name}")
     if freeze_base: _freeze(base, None if not value_head else value_head_prefix)
     model = get_peft_model(base, LoraConfig(r=lora_cfg.get("lora_rank", 32), lora_alpha=lora_cfg.get("lora_alpha", 32), lora_dropout=lora_cfg.get("lora_dropout", 0.05), 
                                             bias="none", target_modules=lora_cfg.get("target_modules", ["q_proj", "k_proj", "v_proj", "o_proj"]))).to(device)
-    if initial_lora_path: _load_lora_state(model, initial_lora_path)
-    tok = AutoTokenizer.from_pretrained(base_name, trust_remote_code=True)
-    tok.pad_token = tok.eos_token
     model.actor_adapter_name = getattr(model, "active_adapter", "default")
+    tok = AutoTokenizer.from_pretrained(base_name, trust_remote_code=True, use_fast=True)
+    tok.pad_token = tok.eos_token
     if value_head:
         model.critic_adapter_name = "critic"
         model.add_adapter(adapter_name=model.critic_adapter_name, peft_config=LoraConfig(r=lora_cfg.get("lora_rank", 32), lora_alpha=lora_cfg.get("lora_alpha", 32), lora_dropout=lora_cfg.get("lora_dropout", 0.05), 
                                                                                          bias="none", target_modules=lora_cfg.get("target_modules", ["q_proj", "k_proj", "v_proj", "o_proj"])))
         model.set_adapter(model.actor_adapter_name)
+    if checkpoint_cfg.get('path', False): _load_lora_state(model, checkpoint_cfg['path'])
     return model, tok
 
 def enable_full_activation_ckpt(model):

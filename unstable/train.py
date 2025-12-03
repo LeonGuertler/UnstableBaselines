@@ -1,4 +1,4 @@
-import ray, argparse, os
+import ray, argparse
 from ray.util.placement_group import placement_group
 from ray.util.scheduling_strategies import PlacementGroupSchedulingStrategy
 from typing import Dict, Optional, Union
@@ -25,14 +25,14 @@ def train(config: Optional[Union[Dict, str]] = 'reinforce', interface: bool = Fa
     num_evaluation_workers = config.get('evaluation_workers', 16)
     # Initialization
     ray.init(config.get('head', None), namespace=config.get('project', 'UnstableBaselines'))
-    learner_config = config['learner']
+    learner_config = config['learner']; checkpoint_config = config['checkpoint']
     learner_gpus = learner_config.pop('num_gpus', 1)
     learner_placement_group = placement_group(bundles=[{"GPU": 1, "CPU": 1} for _ in range(learner_gpus)], strategy="PACK")
     ray.get(learner_placement_group.ready())
     # Tracker
     tracker = Tracker.options(name="Tracker").remote(
         run_name=f"{config.get('run', 'Run')}", 
-        wandb_project=config.get('project', 'UnstableBaselines'), wandb_config=config
+        wandb_project=config.get('project', 'UnstableBaselines'), wandb_id=checkpoint_config.get('wandb_id', None), wandb_config=config
     )
     # Environment Sampler
     env_sampler_config = config['env_sampler']
@@ -50,7 +50,7 @@ def train(config: Optional[Union[Dict, str]] = 'reinforce', interface: bool = Fa
     model_registry_config = model_sampler_config.pop('registry')
     fixed_opponents = model_registry_config.pop('fixed_opponents')
     model_registry = get_model_registry_cls(model_registry_config.pop('type')).options(name="ModelRegistry").remote(tracker=tracker, **model_registry_config)
-    ray.get(model_registry.add_checkpoint.remote(uid=config['checkpoint']['uid'], path=config['checkpoint']['path'], iteration=config['checkpoint']['iteration']))
+    ray.get(model_registry.add_checkpoint.remote(uid=checkpoint_config['uid'], path=checkpoint_config['path'], iteration=checkpoint_config['iteration']))
     for fixed_opponent in fixed_opponents: ray.get(model_registry.add_fixed.remote(name=fixed_opponent))
     model_sampler = get_model_sampler_cls(model_sampler_config.pop('type'))(model_registry=model_registry, **model_sampler_config) 
     # Replay Buffer
@@ -66,6 +66,7 @@ def train(config: Optional[Union[Dict, str]] = 'reinforce', interface: bool = Fa
     leaners = [
         get_learner_cls(learner_type).options(num_gpus=1, name=f"Learner-{i}", scheduling_strategy=PlacementGroupSchedulingStrategy(placement_group=learner_placement_group, placement_group_bundle_index=i)).remote(
             **learner_config,
+            checkpoint_cfg=checkpoint_config,
             buffer=replay_buffer,
             tracker=tracker,
             model_registry=model_registry,
@@ -78,16 +79,11 @@ def train(config: Optional[Union[Dict, str]] = 'reinforce', interface: bool = Fa
     game_scheduler = GameScheduler.options(name="GameScheduler").remote(vllm_config=config['vllm_config'], tracker=tracker, buffer=replay_buffer, model_sampler=model_sampler, env_sampler=env_sampler, action_sampler=action_sampler_config.pop('type'))
     # Terminal Interface
     if interface:
-        import asyncio, os
+        import asyncio
         from threading import Thread
-        from contextlib import redirect_stdout, redirect_stderr
         from unstable.utils.terminal_interface import TerminalInterface
-
         term = TerminalInterface(tracker=tracker, buffer=replay_buffer)  # bind to real stdout
-
-        def _drive_ui():
-            asyncio.run(term.run())
-
+        def _drive_ui(): asyncio.run(term.run())
         Thread(target=_drive_ui, daemon=True).start()
     # Run
     try:
@@ -95,10 +91,6 @@ def train(config: Optional[Union[Dict, str]] = 'reinforce', interface: bool = Fa
         ray.get([learner.train.remote(iterations=config['learner']['total_training_steps']) for learner in leaners])
         _, current_ckpt_lora_path = model_sampler.get_current_ckpt()
     finally: 
-        if interface:
-            stderr_cm.__exit__(None, None, None)
-            stdout_cm.__exit__(None, None, None)
-            null.close()
         ray.kill(game_scheduler, no_restart=True); ray.shutdown()
     return current_ckpt_lora_path
 

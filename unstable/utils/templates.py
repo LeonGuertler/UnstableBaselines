@@ -12,6 +12,7 @@ def get_learner_cls(algorithm: str) -> type:
     import unstable.learner
     match algorithm:
         case "reinforce": return unstable.learner.reinforce.REINFORCELearner
+        case "reinforce-async": return unstable.learner.reinforce_asnyc.REINFORCEAsyncLearner
         case "ppo": return unstable.learner.ppo.PPOLearner
         case "grpo": return unstable.learner.grpo.GRPOLearner
         case _: raise ValueError(f"Algorithm {algorithm} not found")
@@ -67,17 +68,29 @@ TEMPLATE_PARTS = {
     "default": {
         "user": lambda obs: f"You are playing a two-player zero-sum game. Make valid moves to win. You should first reason about your next move, and then submit the move enclosed by \\boxed{{}}.\nObservation: {obs}\n"
     },
+    "qwen3-negotiation": {
+        "user": lambda obs: f"<|im_start|>user\nYou are playing a two-player negotiation game. \nObservation: {obs}.\nPlease reason step by step.<|im_end|>\n",
+        "assistant": "<|im_start|>assistant\n"
+    },
+    "qwen3-negotiation-instruct": {
+        "user": lambda obs: f"<|im_start|>user\nYou are playing a two-player negotiation game. \nObservation: {obs}.<|im_end|>\n",
+        "assistant": "<|im_start|>assistant\n"
+    },
     "qwen3-zs": {
         "user": lambda obs: f"<|im_start|>user\nYou are playing a two-player zero-sum game. Make valid actions to win.\nObservation: {obs}\nPlease reason step by step, and put your final answer within \\boxed{{}}.<|im_end|>\n",
+        "assistant": "<|im_start|>assistant\n"
+    },
+    "qwen3-zs-instruct": {
+        "user": lambda obs: f"<|im_start|>user\nYou are playing a two-player zero-sum game. Make valid actions to win.\nObservation: {obs}<|im_end|>\n",
         "assistant": "<|im_start|>assistant\n"
     },
     "qwen3-sp": {
         "user": lambda obs:  f"<|im_start|>user\nYou are playing a single-player game. Make valid actions to solve it completely.\nObservation: {obs}\nPlease reason step by step, and put your final answer within \\boxed{{}}.<|im_end|>\n",
         "assistant": "<|im_start|>assistant\n"
     },
-    "qwen3-reasoning": {
-        "user": lambda obs: f"<|im_start|>user\nPlease reason step by step, and put your final answer within \\boxed{{}}.\nQuestion: {obs}<|im_end|>\n",
-        "assistant": "<|im_start|>assistant\n<think>"
+    "qwen3-sp-instruct": {
+        "user": lambda obs:  f"<|im_start|>user\nYou are playing a single-player game. Make valid actions to solve it completely.\nObservation: {obs}<|im_end|>\n",
+        "assistant": "<|im_start|>assistant\n"
     },
     "gemma3-zs": {
         "user": lambda obs: f"<bos><start_of_turn>user\nYou are playing a two-player zero-sum game. Make valid actions to win.\nObservation: {obs}\nPlease reason step by step, and put your final answer within \\boxed{{}}.<end_of_turn>\n",

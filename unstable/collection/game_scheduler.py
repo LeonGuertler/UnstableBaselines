@@ -27,17 +27,19 @@ def run_game(game_spec: GameSpec, actor: VLLMActor):
             ) if agent_spec.openrouter_name == None else ta.agents.OpenRouterAgent(agent_spec.openrouter_name)
         )
     } for agent_spec in game_spec.agent_specs} # build agents
-    env=ta.make(game_spec.env_id); env.reset(num_players=len(agents), seed=game_spec.seed); env.state.error_allowance=0; turn=0
+    env=ta.make(game_spec.env_id); env.reset(num_players=len(agents), seed=game_spec.seed); env.state.error_allowance=game_spec.error_allowance; turn=0
     while True:
         pid, obs = env.get_observation()
         action = agents[pid]["model"](obs)
-        done, step_info = env.step(action.extracted_action); turn += 1 # execute the action & increment turn counter
+        done, step_info = env.step(action.action); turn += 1 # execute the action & increment turn counter
         # general tracking
-        game_information.pid.append(pid); game_information.obs.append(obs); game_information.full_actions.append(action.raw)
-        game_information.extracted_actions.append(action.extracted_action); game_information.step_infos.append(step_info); game_information.names[pid] = agents[pid]["name"]
+        game_information.pid.append(pid); game_information.obs.append(obs); game_information.prompts.append(action.prompt); game_information.completions.append(action.completion)
+        game_information.actions.append(action.action); game_information.step_infos.append(step_info); game_information.names[pid] = agents[pid]["name"]
         # player specific trackering
         if agents[pid]["traj"] != None:
-            agents[pid]["traj"].obs.append(obs); agents[pid]["traj"].actions.append(action.raw); agents[pid]["traj"].extracted_actions.append(action.extracted_action)
+            if "logprobs" in action.sampler_info: agents[pid]["traj"].completion_logprobs.append(action.sampler_info["logprobs"])
+            agents[pid]["traj"].obs.append(obs); agents[pid]["traj"].prompts.append(action.prompt); agents[pid]["traj"].prompt_ids.append(action.prompt_ids)
+            agents[pid]["traj"].completions.append(action.completion); agents[pid]["traj"].completion_ids.append(action.completion_ids); agents[pid]["traj"].actions.append(action.action)
             action.format_feedback["invalid_move"] = False; agents[pid]["traj"].format_feedbacks.append(action.format_feedback); agents[pid]["traj"].step_infos.append(step_info)
             for k, v in action.sampler_info.items(): game_information.action_info.setdefault(k, []).append(v)
         if done: break

@@ -15,6 +15,7 @@ class BaseLearner:
         model_name: str, 
         total_training_steps: int, 
         lora_cfg: Dict[str,Any], 
+        checkpoint_cfg: Dict[str,Any],
         local_batch_size: int, 
         micro_batch_size: int, 
         learning_rate: float, 
@@ -57,9 +58,8 @@ class BaseLearner:
         for k, v in env_vars.items(): os.environ[k] = v
         self.ckpt_dir = pathlib.Path(ray.get(self.tracker.get_checkpoints_dir.remote()))
         self.ckpt_dir.mkdir(parents=True, exist_ok=True)
-        torch.set_float32_matmul_precision("high")
         self.device = torch.device(f"cuda:0") if ray.get_gpu_ids() else torch.device("cpu")
-        model, self.tokenizer = build_peft_model(model_name, self.device, lora_cfg, initial_lora_path, value_head=value_head)
+        model, self.tokenizer = build_peft_model(model_name, self.device, lora_cfg, checkpoint_cfg=checkpoint_cfg, value_head=value_head)
         if not self.use_trainer_cache:      model.config.use_cache = False
         if gradient_checkpointing:     model.gradient_checkpointing_enable()
         if activation_checkpointing:   enable_full_activation_ckpt(model)
@@ -95,7 +95,24 @@ class BaseLearner:
             }
         )
         self.logger.info("DeepSpeed initialized successfully")
-        self.model = self.engine.module; self.rank = rank; self.world_size = world_size; self._step = 1; self._samples_seen = 0
+        self.model = self.engine.module; self.rank = rank; self.world_size = world_size; self._step = checkpoint_cfg['iteration']+1; self._samples_seen = self._step * self.local_batch_size
+
+    def _prepare_batch(self, steps):
+        prompt_ids, completion_ids, advs, vllm_logprobs = zip(*[(s.prompt_ids, s.completion_ids, s.reward, s.completion_logprobs) for s in steps])
+        input_ids = self._zero_pad_right([torch.tensor(pid+cid, dtype=torch.long) for pid, cid in zip(prompt_ids, completion_ids)]).to(self.device)
+        advs = torch.tensor(advs, dtype=torch.float32, device=self.device)
+        vllm_logprobs = self._zero_pad_right([torch.tensor(vllm_logprobs, dtype=torch.float32, device=self.device) for vllm_logprobs in vllm_logprobs]).to(self.device)
+        lengths = [len(step.prompt_ids) + len(step.completion_ids) for step in steps]
+        print(lengths)
+        prompt_lengths = [len(step.prompt_ids) for step in steps]
+        if self.max_train_len is not None: input_ids = input_ids[:, :self.max_train_len]; lengths = [min(l, self.max_train_len) for l in lengths]; prompt_lengths = [min(pl, self.max_train_len) for pl in prompt_lengths]
+        attention_mask = self._zero_pad_right([torch.ones(lengths[i], dtype=torch.long) for i in range(len(steps))]).to(self.device)
+        completion_mask = attention_mask.clone().bool()
+        for i in range(len(steps)): completion_mask[i, :prompt_lengths[i]] = False
+        response_mask = completion_mask[:, 1:]
+        vllm_logprobs = self._zero_pad_right(vllm_logprobs)
+        pct_truncated = sum(l > self.max_train_len for l in lengths) / len(lengths) if self.max_train_len else 0
+        return input_ids, advs, vllm_logprobs, lengths, attention_mask, response_mask, pct_truncated
 
     def _update(self, batch):               raise NotImplementedError
     def train(self, iterations: int):
@@ -142,3 +159,9 @@ class BaseLearner:
         mean = self._masked_mean(x, mask, axis=axis).unsqueeze(axis)
         var = ((x - mean) ** 2 * mask).sum(dim=axis) / mask.sum(dim=axis)
         return var.clamp_min(eps).sqrt()
+    def _zero_pad_right(self, seq):
+        max_len = max(s.size(-1) for s in seq); padded_seq = []
+        for s in seq:
+            pad_len = max_len - s.size(-1)
+            padded_seq.append(torch.nn.functional.pad(s, (0, pad_len), value=0))
+        return torch.stack(padded_seq, dim=0)

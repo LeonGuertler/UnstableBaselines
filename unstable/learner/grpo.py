@@ -1,8 +1,6 @@
 import ray
 import torch
-import torch.nn.functional as F
-import tree
-from typing import List, Dict
+from typing import Dict
 
 from unstable.learner.base import BaseLearner
 
@@ -22,21 +20,6 @@ class GRPOLearner(BaseLearner):
         self.entropy_coeff = entropy_coeff
         self.beta = beta
         self.inference_micro_batch_size = inference_micro_batch_size
-
-    def _prepare_batch(self, steps: List) -> tuple:
-        obs, acts, advs = zip(*[(s.obs, s.act, s.reward)for s in steps])
-        advs = torch.tensor(advs, dtype=torch.float32, device=self.device)
-        combined  = [o + a for o, a in zip(obs, acts)]
-        lengths   = [len(self.tokenizer(text, add_special_tokens=False)["input_ids"]) for text in combined]
-        avg_len   = sum(lengths) / len(lengths)
-        pct_truncated = (sum(l > self.max_train_len for l in lengths) / len(lengths) if self.max_train_len else 0.0)
-        enc = self.tokenizer(combined, return_tensors="pt", padding=True, truncation=True, max_length=self.max_train_len).to(self.device)
-        response_mask = enc.attention_mask.bool().clone()
-        for i, text in enumerate(obs):
-            prompt_len = len(self.tokenizer(text, add_special_tokens=False)["input_ids"])
-            response_mask[i, :prompt_len] = False
-        response_mask = response_mask[:, 1:]
-        return enc.input_ids, advs, enc.attention_mask, response_mask, avg_len, pct_truncated
 
     def _get_logps(self, input_ids, attention_mask, response_mask, compute_entropy: bool=False):
         out = self.engine(input_ids=input_ids, attention_mask=attention_mask)
@@ -74,9 +57,10 @@ class GRPOLearner(BaseLearner):
         }
 
     def _update(self, batch):
-        all_steps = tree.flatten(batch)
+        from deepspeed.utils import safe_get_full_grad
         # Fetch behavior and reference logps
-        input_ids, advantages, attention_mask, response_mask, avg_len, pct_truncated = self._prepare_batch(all_steps)
+        input_ids, advantages, vllm_logprobs, lengths, attention_mask, response_mask, pct_truncated = self._prepare_batch(steps=batch)
+        avg_len = sum(lengths) / len(lengths)
         logps = torch.zeros(input_ids.shape[0], input_ids.shape[1]-1, device=self.device)
         if self.beta > 0.0: logps_ref = torch.zeros(input_ids.shape[0], input_ids.shape[1]-1, device=self.device)
         for i in range(0, input_ids.shape[0], self.inference_micro_batch_size):
@@ -88,6 +72,7 @@ class GRPOLearner(BaseLearner):
                     with self.model.disable_adapter():
                         mb_logps_ref = self._get_logps(mb_input_ids, mb_attention_mask, response_mask[i : i + self.inference_micro_batch_size])[0]
                     logps_ref[i : i + self.inference_micro_batch_size] = mb_logps_ref
+        vllm_kl = torch.exp(vllm_logprobs - logps) - (vllm_logprobs - logps) - 1
         # Training loop
         metrics_acc: Dict[str, float] = {}
         for _ in range(self.epochs):
@@ -101,6 +86,7 @@ class GRPOLearner(BaseLearner):
                 update_metrics = self._micro_batch_update_step(mb_input_ids, mb_attention_mask, mb_response_mask, mb_logps, mb_advantages, mb_logps_ref)
                 for k, v in update_metrics.items(): metrics_acc[k] = metrics_acc.get(k, 0.0) + v / self.grad_accumulation_steps
                 self.logger.info(f"Mini-step metrics: {update_metrics}")
+                if self.engine.is_gradient_accumulation_boundary(): grad_norm = (sum(safe_get_full_grad(p).norm(2).cpu()**2 for p in self.model.parameters() if safe_get_full_grad(p) is not None) ** 0.5).item()
                 self.engine.step()
         log = {k: v / (self.epochs) for k, v in metrics_acc.items()}
-        return {**log, "avg_train_len": avg_len, "pct_truncated": pct_truncated, "step": self._step}
+        return {**log, "grad_norm": grad_norm, "avg_train_len": avg_len, "pct_truncated": pct_truncated, "step": self._step, "vllm_kl": self._masked_mean(vllm_kl, response_mask).item()}
