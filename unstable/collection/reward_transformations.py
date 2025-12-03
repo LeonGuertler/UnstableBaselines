@@ -76,7 +76,7 @@ class NormalizeRewardsByEnv(SamplingRewardTransform):
         for step in steps: env_buckets[step.env_id].append(step) # bucket by env
         for env_steps in env_buckets.values():
             r = np.asarray([s.reward for s in env_steps], dtype=np.float32)
-            normed = ((r-r.mean())/r.std()+1e-8) if self.z_score else r-r.mean()
+            normed = ((r-r.mean())/(r.std()+1e-8)) if self.z_score else r-r.mean()
             for s, nr in zip(env_steps, normed): s.reward = float(nr) # write back
         return steps
 
