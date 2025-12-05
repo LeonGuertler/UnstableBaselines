@@ -7,7 +7,7 @@ from transformers import get_scheduler
 from unstable.collection.buffers import BaseBuffer
 from unstable.collection.trackers import BaseTracker
 from unstable.learner.models import build_peft_model, enable_full_activation_ckpt
-from unstable.utils.logging import setup_logger
+from unstable.utils.logger import setup_logger
 
 class BaseLearner:
     def __init__(
@@ -24,7 +24,7 @@ class BaseLearner:
         lr_warmup_ratio: float,
         buffer: BaseBuffer, 
         tracker: BaseTracker, 
-        model_registry, 
+        model_sampler, 
         epochs: int = 1,
         max_generation_len: Optional[int] = None,
         max_train_len: Optional[int] = None,
@@ -42,7 +42,7 @@ class BaseLearner:
         self.model_name = model_name
         self.total_training_steps = total_training_steps; self.epochs = int(epochs)
         self.lora_cfg = lora_cfg; self.initial_lora_path = initial_lora_path
-        self.buffer, self.tracker, self.model_registry = buffer, tracker, model_registry
+        self.buffer, self.tracker, self.model_sampler = buffer, tracker, model_sampler
         self.logger = setup_logger(f"learner-{rank}", ray.get(tracker.get_log_dir.remote()))
         self.use_trainer_cache = use_trainer_cache
         self.max_generation_len = max_generation_len
@@ -103,7 +103,6 @@ class BaseLearner:
         advs = torch.tensor(advs, dtype=torch.float32, device=self.device)
         vllm_logprobs = self._zero_pad_right([torch.tensor(vllm_logprobs, dtype=torch.float32, device=self.device) for vllm_logprobs in vllm_logprobs]).to(self.device)
         lengths = [len(step.prompt_ids) + len(step.completion_ids) for step in steps]
-        print(lengths)
         prompt_lengths = [len(step.prompt_ids) for step in steps]
         if self.max_train_len is not None: input_ids = input_ids[:, :self.max_train_len]; lengths = [min(l, self.max_train_len) for l in lengths]; prompt_lengths = [min(pl, self.max_train_len) for pl in prompt_lengths]
         attention_mask = self._zero_pad_right([torch.ones(lengths[i], dtype=torch.long) for i in range(len(steps))]).to(self.device)
@@ -138,7 +137,7 @@ class BaseLearner:
                     # Save & register the updated checkpoint
                     ckpt_path = self._save_checkpoint()
                     try:
-                        self.model_registry.add_checkpoint.remote(uid=f"ckpt-{self._step}", path=ckpt_path, iteration=self._step)
+                        self.model_sampler.add_checkpoint.remote(uid=f"ckpt-{self._step}", path=ckpt_path, iteration=self._step)
                         self.logger.info(f"Registered new ckpt: {ckpt_path}, ckpt-{self._step}")
                     except Exception as exc: self.logger.info(f"Exception when adding checkpoint: {exc}")
                     self.logger.info(f"registered new ckpt -> {ckpt_path} for iteration{self._step}")

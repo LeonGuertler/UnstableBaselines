@@ -29,10 +29,8 @@ action_sampler:
 
 model_sampler:
   type: "mirror"
-  registry:
-    type: "default"
-    fixed_opponents:
-      - "google/gemini-2.0-flash-lite-001"
+  fixed_opponents:
+    - "google/gemini-2.0-flash-lite-001"
 
 learner:
   num_gpus: 1

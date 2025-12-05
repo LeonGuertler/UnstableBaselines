@@ -1,6 +1,6 @@
 import os, re, ray, time, wandb, collections, datetime, logging, numpy as np
 from typing import Optional, Union, Dict
-from unstable.utils.logging import setup_logger
+from unstable.utils.logger import setup_logger
 
 from unstable.utils._types import PlayerTrajectory, GameInformation
 from unstable.utils.misc import write_game_information_to_file
@@ -90,7 +90,7 @@ class Tracker(BaseTracker):
         except Exception as exc:
             self.logger.info(f"Exception when adding game_info to tracker: {exc}")
 
-    def log_model_registry(self, ts_dict: dict[str, dict[str, float]], match_counts: dict[tuple[str, str], int]):
+    def log_model_sampler(self, ts_dict: dict[str, dict[str, float]], match_counts: dict[tuple[str, str], int]):
         self._interface_stats.update({"TS": ts_dict, "exploration": None, "match_counts": match_counts})
 
     def log_inference(self, actor: str, gpu_ids: list[int], stats: dict[str, float]):

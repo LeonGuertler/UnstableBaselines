@@ -11,7 +11,6 @@ from unstable.utils.templates import (
     get_model_sampler_cls,
     get_reward_transformation_cls,
     get_env_sampler_cls,
-    get_model_registry_cls,
     get_replay_buffer_cls,
     get_learner_cls,
     get_algorithm_config
@@ -45,14 +44,12 @@ def train(config: Optional[Union[Dict, str]] = 'reinforce', interface: bool = Fa
             EvalEnvSpec(env_id=env['id'], num_players=env['num_players'], prompt_template=env['prompt_template'])
             for env in env_sampler_config.pop('eval')
     ], **env_sampler_config)
-    # Model Sampler and Registry
+    # Model Sampler
     model_sampler_config = config['model_sampler']
-    model_registry_config = model_sampler_config.pop('registry')
-    fixed_opponents = model_registry_config.pop('fixed_opponents')
-    model_registry = get_model_registry_cls(model_registry_config.pop('type')).options(name="ModelRegistry").remote(tracker=tracker, **model_registry_config)
-    ray.get(model_registry.add_checkpoint.remote(uid=checkpoint_config['uid'], path=checkpoint_config['path'], iteration=checkpoint_config['iteration']))
-    for fixed_opponent in fixed_opponents: ray.get(model_registry.add_fixed.remote(name=fixed_opponent))
-    model_sampler = get_model_sampler_cls(model_sampler_config.pop('type'))(model_registry=model_registry, **model_sampler_config) 
+    fixed_opponents = model_sampler_config.pop('fixed_opponents') if 'fixed_opponents' in model_sampler_config else []
+    model_sampler = get_model_sampler_cls(model_sampler_config.pop('type')).options(name="ModelSampler").remote(tracker=tracker, **model_sampler_config) 
+    for fixed_opponent in fixed_opponents: ray.get(model_sampler.add_fixed.remote(name=fixed_opponent))
+    ray.get(model_sampler.add_checkpoint.remote(uid=checkpoint_config['uid'], path=checkpoint_config['path'], iteration=checkpoint_config['iteration']))
     # Replay Buffer
     replay_buffer_config = config['replay_buffer']; reward_transformations = replay_buffer_config.pop('reward_transformations'); buffer_type = replay_buffer_config.pop('type')
     replay_buffer = get_replay_buffer_cls(buffer_type).options(name="Buffer").remote(tracker=tracker,
@@ -69,7 +66,7 @@ def train(config: Optional[Union[Dict, str]] = 'reinforce', interface: bool = Fa
             checkpoint_cfg=checkpoint_config,
             buffer=replay_buffer,
             tracker=tracker,
-            model_registry=model_registry,
+            model_sampler=model_sampler,
             rank=i,
             world_size=learner_gpus
         ) for i in range(learner_gpus)

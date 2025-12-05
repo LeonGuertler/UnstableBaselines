@@ -7,7 +7,7 @@ from huggingface_hub import snapshot_download
 import numpy as np
 
 from unstable.collection.trackers import Tracker
-from unstable.utils.logging import setup_logger
+from unstable.utils.logger import setup_logger
 from unstable.collection.actor import VLLMActor
 from unstable.utils._types import AgentSpec, GameSpec, TaskMeta, EvalEnvSpec
 from unstable.utils.misc import write_game_information_to_file
@@ -15,10 +15,12 @@ from unstable.collection.game_scheduler import run_game
 from unstable.utils.templates import get_algorithm_config
 
 
-def eval(run_name: str = 'test', config: Optional[Union[Dict, str]] = 'eval',  ckpt_name_or_path: Optional[str] = None, ckpt_revision: Optional[str] = None, model: str = None):
+def eval(run_name: str = 'test', config: Optional[Union[Dict, str]] = 'eval',  ckpt_name_or_path: Optional[str] = None, ckpt_revision: Optional[str] = None, model: str = None, eval_model: str = None, eval_ckpt: Optional[str] = None, env: str = None):
     # Configuration
     if isinstance(config, str): config = get_algorithm_config(config)
     if model is not None: config['model_name'] = model
+    if env is not None: config['env_id'] = env
+    if eval_model is not None: config["environments"][0]["fixed_opponent"] = eval_model
     ckpt_path = None if ckpt_name_or_path is not None and not os.path.exists(ckpt_name_or_path) else ckpt_name_or_path
     if ckpt_path is None and ckpt_name_or_path is not None:
         try: ckpt_path = snapshot_download(repo_id=ckpt_name_or_path, revision=ckpt_revision, local_files_only=True)
@@ -30,8 +32,7 @@ def eval(run_name: str = 'test', config: Optional[Union[Dict, str]] = 'eval',  c
                 try:
                     game_spec = _games_to_run.popleft()
                     logger.info(f"received eval game_spec: {game_spec}")
-                    actor: VLLMActor = next(_actor_iter)
-                    ref = run_game.remote(game_spec, actor)
+                    ref = run_game.remote(game_spec, actor if not eval_ckpt else {spec.pid: (actor if spec.pid == game_spec.eval_model_pid else eval_actor) for spec in game_spec.agent_specs})
                     flight[ref] = TaskMeta("eval", game_spec.env_id)
                 except Exception as exc: logger.info(f"Exception in eval game {game_spec}: {exc}")
         except Exception as exc: logger.info(f"Exception in _launch_jobs: {exc}")
@@ -73,6 +74,9 @@ def eval(run_name: str = 'test', config: Optional[Union[Dict, str]] = 'eval',  c
             run_name=f"{config.get('run', 'Run')}", 
             wandb_project=None
         )
+        actor = VLLMActor.options(num_gpus=1).remote(cfg=config['vllm_config'], tracker=tracker, name=f"Actor")
+        eval_vllm_config = config["vllm_config"].copy(); eval_vllm_config["model_name"] = eval_model
+        eval_actor = VLLMActor.options(num_gpus=1).remote(cfg=eval_vllm_config, tracker=tracker, name=f"Eval-Actor") if eval_ckpt else None
         logger = setup_logger("evaluator", ray.get(tracker.get_log_dir.remote()))
         output_folder = config.get('output_dir', ray.get(tracker.get_eval_dir.remote()))
         output_folder = os.path.join(output_folder, run_name, config.get('model_name'))
@@ -80,15 +84,15 @@ def eval(run_name: str = 'test', config: Optional[Union[Dict, str]] = 'eval',  c
         if not os.path.exists(output_folder): os.makedirs(output_folder, exist_ok=True)
         csv_path = os.path.join(config.get('output_dir', ray.get(tracker.get_eval_dir.remote())), "results.csv")
         eval_env_specs, num_runs_per_env = config['environments'], config.get('num_runs_per_env', 10)
-        actors = [VLLMActor.options(num_gpus=1).remote(cfg=config['vllm_config'], tracker=tracker, name=f"Actor-{i}") for i in range(int(ray.available_resources().get("GPU", 0)))]
-        _actor_iter = itertools.cycle(actors)
         _games_to_run = deque()
         for game_idx in range(num_runs_per_env*len(eval_env_specs)):
             _env_spec = EvalEnvSpec(**eval_env_specs[game_idx%len(eval_env_specs)])
             pids = list(range(_env_spec.num_players)); random.shuffle(pids); agent_specs = []
             for i, pid in enumerate(pids):
                 if i == 0:  agent_specs.append(AgentSpec(pid=pid, kind="checkpoint", collect_data=False, lora_path=ckpt_path, prompt_template=_env_spec.prompt_template, action_extraction_fn=_env_spec.action_extraction_fn))
-                else:       agent_specs.append(AgentSpec(pid=pid, kind="openrouter", lora_path=None, openrouter_name=_env_spec.fixed_opponent))
+                else:
+                    if eval_ckpt: agent_specs.append(AgentSpec(pid=pid, kind="checkpoint", collect_data=False, lora_path=eval_ckpt , prompt_template=_env_spec.prompt_template, action_extraction_fn=_env_spec.action_extraction_fn))
+                    else: agent_specs.append(AgentSpec(pid=pid, kind="openrouter", lora_path=None, openrouter_name=_env_spec.fixed_opponent))
             _games_to_run.append(GameSpec(game_idx=game_idx, env_id=_env_spec.env_id, seed=game_idx, agent_specs=agent_specs, eval_model_pid=pids[0], eval_opponent_name=_env_spec.fixed_opponent, error_allowance=config.get('error_allowance', 0)))
         logger.info(_games_to_run)
         flight: Dict[ray.ObjectRef, TaskMeta] = {}
@@ -115,8 +119,11 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--run_name", type=str, default="test", help="Run name for logging.")
     parser.add_argument("--config", type=str, default="eval", help="Evaluation config file.")
+    parser.add_argument("--model", type=str, default="Qwen/Qwen3-4B-Base", help="Model for evaluation.")
     parser.add_argument("--checkpoint", type=str, default=None, help="Checkpoint repository name (huggingface) or local path to lora-adapters.")
     parser.add_argument("--revision", type=str, default=None, help="Checkpoint revision, if huggingface.")
-    parser.add_argument("--model", type=str, default="Qwen/Qwen3-4B-Base", help="Model for evaluation.")
+    parser.add_argument("--eval_model", type=str, default=None, help="Model name for evaluation.")
+    parser.add_argument("--eval_ckpt", type=str, default=None, help="Evaluation checkpoint repository name (huggingface) or local path.")
+    parser.add_argument("--env", type=str, default=None, help="Environment ID for evaluation.")
     args = parser.parse_args()
-    eval(run_name=args.run_name, config=args.config, ckpt_name_or_path=args.checkpoint, ckpt_revision=args.revision)
+    eval(run_name=args.run_name, config=args.config, ckpt_name_or_path=args.checkpoint, ckpt_revision=args.revision, model=args.model, eval_model=args.eval_model, eval_ckpt=args.eval_ckpt, env=args.env)

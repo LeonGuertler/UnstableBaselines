@@ -16,5 +16,5 @@ if __name__ == "__main__":
     config = get_algorithm_config(args.algorithm)
     config['run'] = args.name
     config['model_name'] = args.model; config['learner']['model_name'] = args.model; config['vllm_config']['model_name'] = args.model
-    config['env_sampler']['train'] = [{'id': args.env, 'num_players': 2, 'num_actors': 2, 'prompt_template': args.template}]
+    config['env_sampler']['train'] = [{'id': args.env, 'num_players': 2, 'num_actors': 1, 'prompt_template': args.template}]
     train(config)

@@ -3,7 +3,7 @@ import os, ray, tree, random, tree
 from threading import Lock
 from typing import List, Optional
 
-from unstable.utils.logging import setup_logger
+from unstable.utils.logger import setup_logger
 from unstable.utils._types import PlayerTrajectory, Step
 from unstable.collection.trackers import BaseTracker
 from unstable.utils.misc import write_training_data_to_file

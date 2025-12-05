@@ -17,19 +17,14 @@ def get_learner_cls(algorithm: str) -> type:
         case "grpo": return unstable.learner.grpo.GRPOLearner
         case _: raise ValueError(f"Algorithm {algorithm} not found")
 
-def get_model_registry_cls(model_registry_strategy: str) -> type:
-    import unstable.collection.model_samplers
-    match model_registry_strategy:
-        case "default": return unstable.collection.model_samplers.ModelRegistry
-        case _: raise ValueError(f"Model registry strategy {model_registry_strategy} not found")
-
 def get_model_sampler_cls(model_sampling_strategy: str) -> type:
     import unstable.collection.model_samplers
     match model_sampling_strategy:
-        case "default": return unstable.collection.model_samplers.BaseModelSampler
-        case "mirror": return unstable.collection.model_samplers.BaseModelSampler
+        case "default": return unstable.collection.model_samplers.MirrorModelSampler
+        case "mirror": return unstable.collection.model_samplers.MirrorModelSampler
         case "fixed": return unstable.collection.model_samplers.FixedOpponentModelSampler
         case "asynchronous": return unstable.collection.model_samplers.AsynchronousModelSampler
+        case "win_rate": return unstable.collection.model_samplers.WinRateModelSampler
         case _: raise ValueError(f"Model sampling strategy {model_sampling_strategy} not found")
 
 def get_action_sampler_cls(action_sampling_strategy: str) -> type:

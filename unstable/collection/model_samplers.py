@@ -4,21 +4,17 @@ from collections import defaultdict, deque
 from typing import Dict, Any, List
 
 from unstable.utils._types import GameInformation, ModelMeta
-from unstable.utils.logging import setup_logger
+from unstable.utils.logger import setup_logger
 
-
-@ray.remote
-class ModelRegistry:
-    ''' Keeps a registry of models and their ratings. 
-    '''
-    def __init__(self, tracker, beta: float = 4.0, k: int = 1):
+class BaseModelSampler:
+    def __init__(self, tracker, beta: float = 4.0): 
         self.TS = trueskill.TrueSkill(beta=beta)
         self._db: dict[str, ModelMeta] = {}
-        self._match_counts = defaultdict(int) # (uid_a, uid_b) -> n
+        self._match_counts = defaultdict(int)
         self._exploration = defaultdict(lambda: defaultdict(dict))
         self._current_ckpt_uid : str | None = None; self.active_ckpt = deque()
-        self._tracker = tracker; self._update_step: int = 1; self.k = k
-        self.logger = setup_logger("model_registry", ray.get(self._tracker.get_log_dir.remote()))
+        self._tracker = tracker; self._update_step: int = 1; 
+        self.logger = setup_logger("model_sampler", ray.get(self._tracker.get_log_dir.remote()))
 
     @staticmethod
     def _scores_to_ranks(scores: List[float]) -> List[int]:
@@ -28,25 +24,28 @@ class ModelRegistry:
             if i and scores[idx] != scores[order[i-1]]: rank = i  # next rank starts here
             ranks[idx] = rank
         return ranks
-
+    
     def add_checkpoint(self, uid: str, path: str, iteration: int, inherit: bool=True):
         self.logger.info(f"tryin to add ckpt: {uid}, path {path}, iteration {iteration}, inherit: {inherit}")
         if uid in self._db: return
         rating = self.TS.Rating(mu=self._db[self._current_ckpt_uid].rating.mu, sigma=self._db[self._current_ckpt_uid].rating.sigma*2) if (inherit and self._current_ckpt_uid in self._db) else self.TS.create_rating()
         self._db[uid] = ModelMeta(uid=uid, kind="checkpoint", path_or_name=path, rating=rating, iteration=iteration)
         self._current_ckpt_uid = uid # make it current
-        if self.k is not None: 
-            self.active_ckpt.append(uid)
-            if len(self.active_ckpt) > self.k: self._db[self.active_ckpt.popleft()].active = False
         self.logger.info(f"added ckpt: {uid}, path {path}, iteration {iteration}, inherit: {inherit}")
-
+    
     def get_all_models(self): return copy.deepcopy(self._db)
     def get_current_ckpt(self) -> str|None: return self._current_ckpt_uid
     def get_name_or_lora_path(self, uid: str) -> str: return self._db[uid].path_or_name
     def add_fixed(self, name: str, prior_mu: float = 25.): 
         if f"fixed-{name}" not in self._db: self._db[f"fixed-{name}"] = ModelMeta(f"fixed-{name}", "fixed", name, self.TS.create_rating(mu=prior_mu))
 
-    def update_ratings(self, uids: List[str], scores: List[float], env_id: str, dummy_uid: str="fixed-env") -> None:
+    def get_current_ckpt(self):         
+        current_ckpt_lora_path = self.get_name_or_lora_path(uid=self._current_ckpt_uid)
+        return self._current_ckpt_uid, current_ckpt_lora_path
+    
+    def update(self, game_info: GameInformation, job_info: Dict[str, Any],  dummy_uid: str="fixed-env"):
+        uids = [m["uid"] for m in job_info["models"] if m["pid"] in game_info.final_rewards]
+        scores = [game_info.final_rewards[m["pid"]] for m in job_info["models"] if m["pid"] in game_info.final_rewards]
         if len(uids) == 1:
             if dummy_uid not in self._db: self.add_fixed(name=dummy_uid.replace("fixed-", ""), prior_mu=25.0)
             uids = [uids[0], dummy_uid]
@@ -54,58 +53,86 @@ class ModelRegistry:
         rating_groups = [[self._db[uid].rating] for uid in uids]
         ranks = self._scores_to_ranks(scores)
         new_groups = self.TS.rate(rating_groups, ranks=ranks)
-
         # flatten, then write back
         for uid, (new_rating,) in zip(uids, new_groups):
             self._db[uid].rating = new_rating
             self._db[uid].games += 1
             if ranks[uids.index(uid)] == 0:               self._db[uid].wins  += 1
             elif ranks.count(ranks[uids.index(uid)]) > 1: self._db[uid].draws += 1
-
         # update pair-wise match matrix for analysis/debugging
         for i, uid_i in enumerate(uids):
             for uid_j in uids[i+1:]:
                 self._match_counts[tuple(sorted((uid_i, uid_j)))] += 1
         self._update_step += 1
-
         # push to tracker every n update steps
-        if not self._update_step%10: self._tracker.log_model_registry.remote(ts_dict={uid: asdict(meta) for uid, meta in self._db.items()}, match_counts=copy.deepcopy(self._match_counts))
+        if not self._update_step%10: self._tracker.log_model_sampler.remote(ts_dict={uid: asdict(meta) for uid, meta in self._db.items()}, match_counts=copy.deepcopy(self._match_counts))
 
-
-class BaseModelSampler:
-    def __init__(self, model_registry): 
-        self.model_registry = model_registry
-    
-    def get_current_ckpt(self):         
-        current_ckpt_uid = ray.get(self.model_registry.get_current_ckpt.remote())
-        current_ckpt_lora_path = ray.get(self.model_registry.get_name_or_lora_path.remote(uid=current_ckpt_uid))
-        return current_ckpt_uid, current_ckpt_lora_path
-    
-    def update(self, game_info: GameInformation, job_info: Dict[str, Any]):
-        self.model_registry.update_ratings.remote(
-            uids = [m["uid"] for m in job_info["models"] if m["pid"] in game_info.final_rewards],
-            scores = [game_info.final_rewards[m["pid"]] for m in job_info["models"] if m["pid"] in game_info.final_rewards],
-            env_id = job_info["env_id"]
-        )
     def sample_opponent(self): raise NotImplementedError 
 
 
+@ray.remote
+class MirrorModelSampler(BaseModelSampler):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+    
+    def sample_opponent(self): 
+        current_uid = self.get_current_ckpt()[0]
+        opponent_meta = self._db[current_uid]
+        return opponent_meta.uid, opponent_meta.kind, None, opponent_meta.path_or_name
+    
+@ray.remote
 class FixedOpponentModelSampler(BaseModelSampler):
-    def __init__(self, model_registry, include_current_ckpt: bool = False):
-        super().__init__(model_registry)
+    def __init__(self, include_current_ckpt: bool = False, **kwargs):
+        super().__init__(**kwargs)
         self.include_current_ckpt = include_current_ckpt
 
     def sample_opponent(self): 
-        available_models = [model_meta for uid, model_meta in ray.get(self.model_registry.get_all_models.remote()).items() if (model_meta.active and model_meta.kind=="fixed") or (model_meta.uid==ray.get(self.model_registry.get_current_ckpt.remote()) and self.include_current_ckpt)]
+        available_models = [model_meta for uid, model_meta in self.get_all_models().items() if (model_meta.active and model_meta.kind=="fixed") or (model_meta.uid==self.get_current_ckpt() and self.include_current_ckpt)]
         opponent_meta = random.choice(available_models)
         return opponent_meta.uid, opponent_meta.kind, None, opponent_meta.path_or_name
 
 
+@ray.remote
 class AsynchronousModelSampler(BaseModelSampler):
-    def __init__(self, model_registry):
-        super().__init__(model_registry)
+    def __init__(self, k: int = 1, **kwargs):
+        super().__init__(**kwargs)
+        self.k = k
+    
+    def add_checkpoint(self, uid, path, iteration, inherit = True):
+        super().add_checkpoint(uid, path, iteration, inherit)
+        if self.k is not None: 
+            self.active_ckpt.append(uid)
+            if len(self.active_ckpt) > self.k: self._db[self.active_ckpt.popleft()].active = False
     
     def sample_opponent(self): 
-        available_models = [model_meta for uid, model_meta in ray.get(self.model_registry.get_all_models.remote()).items() if (model_meta.active and model_meta.kind=="checkpoint")]
-        opponent_meta = random.choice(available_models)
+        opponent_meta = random.choice([model_meta for uid, model_meta in self.get_all_models().items() if (model_meta.active and model_meta.kind=="checkpoint")])
+        return opponent_meta.uid, opponent_meta.kind, None, opponent_meta.path_or_name
+    
+
+@ray.remote
+class WinRateModelSampler(BaseModelSampler):
+    def __init__(self, win_rate_threshold: float = 0.7, window: int = 100, **kwargs):
+        super().__init__(**kwargs)
+        self.win_rate_threshold = win_rate_threshold
+        self._window = window
+        self._recent_outcomes = deque(maxlen=window)  # 1 = learner win, 0 = loss/draw
+        self._current_opponent_meta = None
+
+    def update(self, game_info: GameInformation, job_info: Dict[str, Any]):
+        super().update(game_info, job_info)
+        actor = next((m for m in job_info["models"] if m["type"] == "model"), None)
+        opp   = next((m for m in job_info["models"] if m["type"] == "opponent"), None)
+        if actor and opp and actor["pid"] in game_info.final_rewards and opp["pid"] in game_info.final_rewards:
+            actor_r, opp_r = game_info.final_rewards[actor["pid"]], game_info.final_rewards[opp["pid"]]
+            self._recent_outcomes.append(1 if actor_r > opp_r else 0)
+
+    def _should_rotate(self): return len(self._recent_outcomes) == self._window and sum(self._recent_outcomes) / self._window > self.win_rate_threshold
+
+    def sample_opponent(self):
+        if self._current_opponent_meta is None or self._should_rotate():
+            opponent_meta = self._db[self._current_ckpt_uid]
+            self._current_opponent_meta = opponent_meta
+            self._recent_outcomes.clear()
+        else: opponent_meta = self._current_opponent_meta
+        self.logger.info(f"sampling opponent: {opponent_meta.uid}, win rate: {sum(self._recent_outcomes)}/{len(self._recent_outcomes)}")
         return opponent_meta.uid, opponent_meta.kind, None, opponent_meta.path_or_name

@@ -1,5 +1,5 @@
 import ray, random, itertools, os
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union
 import ray
 from ray.exceptions import RayActorError, RayTaskError
 import textarena as ta
@@ -7,20 +7,20 @@ assert ta.__version__ >= "0.6.16", f"TextArena package version is too old: {ta._
 
 from unstable.collection.actor import VLLMActor, CallableActorWrapper
 from unstable.utils._types import GameSpec, GameInformation, PlayerTrajectory, TaskMeta, AgentSpec
-from unstable.utils.logging import setup_logger
+from unstable.utils.logger import setup_logger
 from unstable.utils.templates import ACTION_EXTRACTION, OBSERVATION_FORMATTING, get_action_sampler_cls
 from unstable.utils.misc import write_game_information_to_file
 
 
 @ray.remote(num_cpus=0)
-def run_game(game_spec: GameSpec, actor: VLLMActor):
+def run_game(game_spec: GameSpec, actor: Union["VLLMActor", dict[int, "VLLMActor"]]):
     game_information = GameInformation(game_idx=game_spec.game_idx, env_id=game_spec.env_id, eval_model_pid=game_spec.eval_model_pid, eval_opponent_name=game_spec.eval_opponent_name)
     agents = {agent_spec.pid: {
         "traj": PlayerTrajectory(pid=agent_spec.pid) if agent_spec.collect_data else None, 
         "name": agent_spec.lora_path if agent_spec.lora_path else agent_spec.openrouter_name,
         "model": get_action_sampler_cls(agent_spec.sampler)(
             CallableActorWrapper(
-                actor=actor,
+                actor=actor[agent_spec.pid] if isinstance(actor, dict) else actor,
                 lora_path=agent_spec.lora_path,
                 obs_fmt_fn=OBSERVATION_FORMATTING[agent_spec.prompt_template],
                 extract_fn=ACTION_EXTRACTION[agent_spec.action_extraction_fn],
@@ -112,7 +112,7 @@ class GameScheduler:
     def _next_train_job(self):
         try:
             env_spec = self.env_sampler.sample(kind="train") # sample the env spec
-            current_ckpt_uid, current_ckpt_lora_path = self.model_sampler.get_current_ckpt() # sample the current checkpoint
+            current_ckpt_uid, current_ckpt_lora_path = ray.get(self.model_sampler.get_current_ckpt.remote()) # sample the current checkpoint
             # build the game spec and agent specs
             pids = list(range(env_spec.num_players))
             random.shuffle(pids); agent_specs = []
@@ -122,7 +122,7 @@ class GameScheduler:
                     self._running_jobs[self._game_idx]["models"].append({"uid": current_ckpt_uid, "pid": pid, "type": "model"})
                     agent_specs.append(AgentSpec(pid=pid, kind="checkpoint", collect_data=True, lora_path=current_ckpt_lora_path, prompt_template=env_spec.prompt_template, action_extraction_fn=env_spec.action_extraction_fn))
                 else:
-                    opp_uid, kind, opp_lora_path, opp_name_or_path = self.model_sampler.sample_opponent()
+                    opp_uid, kind, opp_lora_path, opp_name_or_path = ray.get(self.model_sampler.sample_opponent.remote())
                     if kind == "checkpoint": agent_specs.append(AgentSpec(pid=pid, kind="checkpoint", collect_data=False, lora_path=opp_name_or_path, prompt_template=env_spec.prompt_template, action_extraction_fn=env_spec.action_extraction_fn))
                     else: agent_specs.append(AgentSpec(pid=pid, kind=kind, lora_path=opp_lora_path, openrouter_name=opp_name_or_path)) # TODO might have to adjust what is passed
                     self._running_jobs[self._game_idx]["models"].append({"uid": opp_uid, "pid": pid, "type": "opponent"})
@@ -146,12 +146,12 @@ class GameScheduler:
         actor_rs = [game_information.final_rewards[m["pid"]] for m in job_info["models"] if m["type"] == "model" if m["pid"] in game_information.final_rewards]
         opp_rs = [game_information.final_rewards[m["pid"]] for m in job_info["models"] if m["type"] == "opponent" if m["pid"] in game_information.final_rewards]
         self.env_sampler.update(avg_actor_reward=(sum(actor_rs) / len(actor_rs) if actor_rs else None), avg_opponent_reward=(sum(opp_rs) / len(opp_rs) if opp_rs else None))
-        self.model_sampler.update(game_info=game_information, job_info=job_info)
+        self.model_sampler.update.remote(game_info=game_information, job_info=job_info)
 
     def _next_eval_job(self):
         try:
             env_spec = self.env_sampler.sample(kind="eval")
-            current_ckpt_uid, current_ckpt_lora_path = self.model_sampler.get_current_ckpt()
+            current_ckpt_uid, current_ckpt_lora_path = ray.get(self.model_sampler.get_current_ckpt.remote())
             pids = list(range(env_spec.num_players))
             random.shuffle(pids); agent_specs = []
             for i, pid in enumerate(pids):

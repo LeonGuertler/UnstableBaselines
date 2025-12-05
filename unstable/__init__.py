@@ -3,5 +3,5 @@ from unstable.learner import *
 from unstable.train import *
 from unstable.utils import *
 
-__all__ = ["train", "eval", "Collector", "StepBuffer", "EpisodeBuffer", "REINFORCELearner", "PPOLearner", "GRPOLearner", "Tracker", "ModelRegistry", "GameScheduler", "TerminalInterface", "TrainEnvSpec", "EvalEnvSpec"]
+__all__ = ["train", "eval", "Collector", "StepBuffer", "EpisodeBuffer", "REINFORCELearner", "PPOLearner", "GRPOLearner", "Tracker", "GameScheduler", "TerminalInterface", "TrainEnvSpec", "EvalEnvSpec"]
 __version__ = "0.2.0"
