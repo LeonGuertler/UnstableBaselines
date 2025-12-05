@@ -78,6 +78,7 @@ class MirrorModelSampler(BaseModelSampler):
     def sample_opponent(self): 
         current_uid = self.get_current_ckpt()[0]
         opponent_meta = self._db[current_uid]
+        self.logger.info(f"sampling mirror opponent: {opponent_meta.uid}")
         return opponent_meta.uid, opponent_meta.kind, None, opponent_meta.path_or_name
     
 @ray.remote
@@ -89,6 +90,7 @@ class FixedOpponentModelSampler(BaseModelSampler):
     def sample_opponent(self): 
         available_models = [model_meta for uid, model_meta in self.get_all_models().items() if (model_meta.active and model_meta.kind=="fixed") or (model_meta.uid==self.get_current_ckpt() and self.include_current_ckpt)]
         opponent_meta = random.choice(available_models)
+        self.logger.info(f"sampling fixed opponent: {opponent_meta.uid}")
         return opponent_meta.uid, opponent_meta.kind, None, opponent_meta.path_or_name
 
 
@@ -106,6 +108,7 @@ class AsynchronousModelSampler(BaseModelSampler):
     
     def sample_opponent(self): 
         opponent_meta = random.choice([model_meta for uid, model_meta in self.get_all_models().items() if (model_meta.active and model_meta.kind=="checkpoint")])
+        self.logger.info(f"sampling opponent: {opponent_meta.uid}")
         return opponent_meta.uid, opponent_meta.kind, None, opponent_meta.path_or_name
     
 
