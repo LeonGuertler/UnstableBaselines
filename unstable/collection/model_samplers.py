@@ -114,12 +114,18 @@ class AsynchronousModelSampler(BaseModelSampler):
 
 @ray.remote
 class WinRateModelSampler(BaseModelSampler):
-    def __init__(self, win_rate_threshold: float = 0.7, window: int = 100, **kwargs):
+    def __init__(self, threshold: float = 0.7, **kwargs):
         super().__init__(**kwargs)
-        self.win_rate_threshold = win_rate_threshold
-        self._window = window
-        self._recent_outcomes = deque(maxlen=window)  # 1 = learner win, 0 = loss/draw
+        self.threshold = threshold
+        self._recent_outcomes = deque()
         self._current_opponent_meta = None
+
+    def add_checkpoint(self, uid: str, path: str, iteration: int, inherit: bool = True):
+        promote_opponent = self._should_rotate()
+        super().add_checkpoint(uid, path, iteration, inherit)
+        if self._current_opponent_meta is None or promote_opponent: self._current_opponent_meta = self._db[uid]
+        self.logger.info(f"New opponent promoted! {self._current_opponent_meta.uid}. Win rate: {self._current_win_rate()}" if promote_opponent else f"No opponent change. Win rate: {self._current_win_rate()}")
+        self._recent_outcomes.clear()
 
     def update(self, game_info: GameInformation, job_info: Dict[str, Any]):
         super().update(game_info, job_info)
@@ -129,13 +135,10 @@ class WinRateModelSampler(BaseModelSampler):
             actor_r, opp_r = game_info.final_rewards[actor["pid"]], game_info.final_rewards[opp["pid"]]
             self._recent_outcomes.append(1 if actor_r > opp_r else 0)
 
-    def _should_rotate(self): return len(self._recent_outcomes) == self._window and sum(self._recent_outcomes) / self._window > self.win_rate_threshold
-
     def sample_opponent(self):
-        if self._current_opponent_meta is None or self._should_rotate():
-            opponent_meta = self._db[self._current_ckpt_uid]
-            self._current_opponent_meta = opponent_meta
-            self._recent_outcomes.clear()
-        else: opponent_meta = self._current_opponent_meta
-        self.logger.info(f"sampling opponent: {opponent_meta.uid}, win rate: {sum(self._recent_outcomes)}/{len(self._recent_outcomes)}")
-        return opponent_meta.uid, opponent_meta.kind, None, opponent_meta.path_or_name
+        if self._current_opponent_meta is None: self._current_opponent_meta = self._db[self._current_ckpt_uid]
+        self.logger.info(f"sampling opponent: {self._current_opponent_meta.uid}, current win rate: {sum(self._recent_outcomes)}/{len(self._recent_outcomes)}")
+        return self._current_opponent_meta.uid, self._current_opponent_meta.kind, None, self._current_opponent_meta.path_or_name
+
+    def _current_win_rate(self) -> float:  return sum(self._recent_outcomes) / len(self._recent_outcomes) if self._recent_outcomes else 0.0
+    def _should_rotate(self): return self._current_win_rate() > self.threshold
