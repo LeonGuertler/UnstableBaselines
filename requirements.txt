@@ -1,13 +1,13 @@
 ninja
 textarena
-vllm==0.11.0
+vllm==0.11.2
 ray
-torch
-transformers
+torch==2.9.0
+transformers==4.57.1
 peft
 trueskill
 pynvml
 dm-tree
-deepspeed
+deepspeed==0.18.0
 pydantic
 wandb
