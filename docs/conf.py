@@ -36,8 +36,7 @@ autodoc_mock_imports = [
     "dm_tree",
     "textarena",
     "wandb",
-    "trueskill",
-    "pynvml",
+    "trueskill"
 ]
 
 napoleon_google_docstring = True

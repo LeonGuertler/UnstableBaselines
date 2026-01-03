@@ -29,7 +29,7 @@ class VLLMActor:
         self.logger.info(f"vLLM model path or name: {engine_args.model}")
         self.logger.info(f"Model architecture: {self.engine.model_config.__dict__}")
             
-        self.sampling_params = SamplingParams(temperature=cfg.get("temperature", 0.7), top_p=cfg.get("top_p", 0.95), max_tokens=cfg.get("max_tokens", 4096), logprobs=1, prompt_logprobs=True)
+        self.sampling_params = SamplingParams(temperature=cfg.get("temperature", 0.7), top_p=cfg.get("top_p", 0.95), top_k=cfg.get("top_k", 50), max_tokens=cfg.get("max_tokens", 4096), logprobs=1, prompt_logprobs=True)
 
         self._queue = deque()
         self._futures = {}

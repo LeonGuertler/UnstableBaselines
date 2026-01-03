@@ -6,7 +6,6 @@ torch==2.9.0
 transformers==4.57.1
 peft
 trueskill
-pynvml
 dm-tree
 deepspeed==0.18.0
 pydantic
