@@ -13,7 +13,7 @@ if __name__ == "__main__":
     parser.add_argument("--algorithm", type=str, default="grpo", help="The algorithm to train on.") 
     parser.add_argument("--envs", type=str, default="ConnectFour-v0-train", help=(
         "Comma-separated list of environments to train on. "
-        "Example: ConnectFour-v0-train,TicTacToe-v0-train"
+        "Example: 'ConnectFour-v0-train,AnotherEnv-v0'"
         ),
     )
     parser.add_argument("--model", type=str, default="Qwen/Qwen3-1.7B-Base", help="The model to train on.")

@@ -21,8 +21,8 @@ class VLLMActor:
         
         engine_args = EngineArgs(
             model=cfg["model_name"], enable_lora=True, max_loras=cfg["max_loras"], max_lora_rank=cfg["lora_config"]["lora_rank"], 
-            max_cpu_loras=cfg["max_loras"], max_num_seqs=cfg["max_parallel_seq"], task="generate", max_model_len=cfg["max_model_len"],
-            disable_custom_all_reduce=True, enforce_eager=True, disable_log_stats=True
+            max_cpu_loras=cfg["max_loras"], max_num_seqs=cfg["max_parallel_seq"], max_model_len=cfg["max_model_len"],
+            disable_custom_all_reduce=False, enforce_eager=False, disable_log_stats=False
         )
         try: self.engine = LLMEngine.from_engine_args(engine_args); self.logger.info("VLLM engine initialized successfully")
         except Exception as e: self.logger.error(f"VLLM engine initialization failed: {e}"); raise
@@ -60,7 +60,7 @@ class VLLMActor:
         self.logger.info("Starting _batch_loop")
         while True:
             try:
-                await asyncio.sleep(0.02)
+                await asyncio.sleep(0)
                 if time.monotonic() - self._last_step_time > 30: 
                     self.logger.error(f"Potential deadlock detected - no engine steps for {time.monotonic() - self._last_step_time:.1f} seconds\nRunning requests: {dict(self._running)}\nQueue size: {len(self._queue)}") # 30 second deadlock detection
                 while self._queue:

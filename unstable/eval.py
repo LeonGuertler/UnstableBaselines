@@ -15,10 +15,11 @@ from unstable.collection.game_scheduler import run_game
 from unstable.utils.templates import get_algorithm_config
 
 
-def _launch_jobs(max_eval: int, _games_to_run, _num_running, flight, actor, opponent_adapter_checkpoint, opponent_actor, logger):
+def _launch_jobs(max_eval: int, _games_to_run, _num_running, flight, actors, opponent_adapter_checkpoint, opponent_actors, logger):
     try:
         while _num_running("eval") < max_eval and _games_to_run:
             try:
+                actor = next(actors); opponent_actor = next(opponent_actors) if opponent_adapter_checkpoint else None
                 game_spec = _games_to_run.popleft()
                 logger.info(f"received eval game_spec: {game_spec}")
                 ref = run_game.remote(game_spec, actor if not opponent_adapter_checkpoint else {spec.pid: (actor if spec.pid == game_spec.eval_model_pid else opponent_actor) for spec in game_spec.agent_specs})
@@ -71,7 +72,7 @@ def _handle_finished_job(ref, flight, run_name, config, adapter_checkpoint, adap
 def eval(run_name: str = 'test', config: Optional[Union[Dict, str]] = 'eval',  adapter_checkpoint: Optional[str] = None, adapter_revision: Optional[str] = None, opponent_model: str = None, opponent_adapter_checkpoint: str = None, env: str = None):
     # Configuration
     if isinstance(config, str): config = get_algorithm_config(config)
-    if env is not None: config['env_id'] = env
+    if env is not None: config["environments"][0]['env_id'] = env
     if opponent_model is not None: config["environments"][0]["fixed_opponent"] = opponent_model
     ckpt_path = adapter_checkpoint if adapter_checkpoint is not None and os.path.exists(adapter_checkpoint) else None
     if ckpt_path is None and adapter_checkpoint is not None:
@@ -88,9 +89,14 @@ def eval(run_name: str = 'test', config: Optional[Union[Dict, str]] = 'eval',  a
         logger = setup_logger("evaluator", ray.get(tracker.get_log_dir.remote()))
         
         # Actors
-        actor = VLLMActor.options(num_gpus=1).remote(cfg=config['vllm_config'], tracker=tracker, name=f"Actor")
+        actors = [VLLMActor.options(num_gpus=1).remote(cfg=config['vllm_config'], tracker=tracker, name=f"Actor-{i}") for i in range(config.get('num_actors', 1))]
+        for actor in actors: ray.get(actor.ready.remote())
+        actors = itertools.cycle(actors)
         opponent_vllm_config = config["vllm_config"].copy(); opponent_vllm_config["model_name"] = opponent_model
-        opponent_actor = VLLMActor.options(num_gpus=1).remote(cfg=opponent_vllm_config, tracker=tracker, name=f"Eval-Actor") if opponent_adapter_checkpoint else None
+        opponent_actors = [VLLMActor.options(num_gpus=1).remote(cfg=opponent_vllm_config, tracker=tracker, name=f"Eval-Actor-{i}") if opponent_adapter_checkpoint else None for i in range(config.get('num_actors', 1))]
+        for actor in opponent_actors: 
+            if actor is not None: ray.get(actor.ready.remote())
+        opponent_actors = itertools.cycle([actor for actor in opponent_actors if actor is not None])
 
         # Results Logging
         output_folder = config.get('output_dir', 'outputs')
@@ -128,7 +134,7 @@ def eval(run_name: str = 'test', config: Optional[Union[Dict, str]] = 'eval',  a
     # Run
     while _games_to_run or flight:
         logger.info("entered collect loop")
-        _launch_jobs(config['num_eval_workers'], _games_to_run, _num_running, flight, actor, opponent_adapter_checkpoint, opponent_actor, logger)
+        _launch_jobs(config['num_eval_workers'], _games_to_run, _num_running, flight, actors, opponent_adapter_checkpoint, opponent_actors, logger)
         if not flight: time.sleep(0.01); continue
         done_ref, _ = ray.wait(list(flight), num_returns=1)
         _handle_finished_job(done_ref[0], flight, run_name, config, adapter_checkpoint, adapter_revision, opponent_model, opponent_adapter_checkpoint, csv_path, csv_fields, output_folder, logger)

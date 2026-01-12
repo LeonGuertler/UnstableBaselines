@@ -61,7 +61,8 @@ def get_reward_transformation_cls(reward_transformation: str) -> type:
 def format_template(system: str = "", user: str = "", assistant: str = "") -> str: return f"{system}{user}{assistant}"
 TEMPLATE_PARTS = {
     "default": {
-        "user": lambda obs: f"You are playing a two-player zero-sum game. Make valid moves to win. You should first reason about your next move, and then submit the move enclosed by \\boxed{{}}.\nObservation: {obs}\n"
+        "user": lambda obs: f"<|im_start|>user\n{obs}<|im_end|>\n",
+        "assistant": "<|im_start|>assistant\n"
     },
     "qwen3-negotiation": {
         "user": lambda obs: f"<|im_start|>user\nYou are playing a two-player negotiation game. \nObservation: {obs}.\nPlease reason step by step.<|im_end|>\n",
