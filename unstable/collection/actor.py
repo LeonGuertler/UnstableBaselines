@@ -4,6 +4,7 @@ from typing import Optional, Dict, Any, Callable, Tuple
 from pathlib import Path
 
 import ray
+from huggingface_hub import snapshot_download
 from vllm.engine.arg_utils import EngineArgs
 from vllm.engine.llm_engine import LLMEngine
 from vllm.sampling_params import SamplingParams
@@ -22,7 +23,7 @@ class VLLMActor:
         engine_args = EngineArgs(
             model=cfg["model_name"], enable_lora=True, max_loras=cfg["max_loras"], max_lora_rank=cfg["lora_config"]["lora_rank"], 
             max_cpu_loras=cfg["max_loras"], max_num_seqs=cfg["max_parallel_seq"], max_model_len=cfg["max_model_len"],
-            disable_custom_all_reduce=False, enforce_eager=False, disable_log_stats=False
+            disable_custom_all_reduce=True, enforce_eager=True, disable_log_stats=False
         )
         try: self.engine = LLMEngine.from_engine_args(engine_args); self.logger.info("VLLM engine initialized successfully")
         except Exception as e: self.logger.error(f"VLLM engine initialization failed: {e}"); raise
@@ -46,6 +47,7 @@ class VLLMActor:
         self._batch_task = asyncio.create_task(self._batch_loop())
         self._report_task = asyncio.create_task(self._report_loop())
         self._lora_ids: Dict[str, int] = {"base": 0}
+        self._lora_resolved: Dict[str, str] = {}  # maps original path -> resolved local path
         self._next_lora_id = 1
         self._last_step_time = time.monotonic()  # Add health check flag
 
@@ -74,11 +76,20 @@ class VLLMActor:
 
                     if path:
                         if path not in self._lora_ids:
+                            if os.path.exists(path): resolved = path
+                            else:
+                                try:
+                                    resolved = snapshot_download(repo_id=path, local_files_only=True)
+                                    self.logger.info(f"Found cached HF repo '{path}' at {resolved}")
+                                except Exception:
+                                    resolved = snapshot_download(repo_id=path)
+                                    self.logger.info(f"Downloaded HF repo '{path}' to {resolved}")
+                            self._lora_resolved[path] = resolved
                             self._lora_ids[path] = self._next_lora_id
                             self._next_lora_id += 1
-                        lora_req = LoRARequest(path, self._lora_ids[path], path)
-                    else:
-                        lora_req = None
+                        resolved_path = self._lora_resolved[path]
+                        lora_req = LoRARequest(path, self._lora_ids[path], resolved_path)
+                    else: lora_req = None
                     try: self.engine.add_request(req_id, prompt, self.sampling_params, lora_request=lora_req)
                     except Exception as e:
                         self.logger.error(f"Failed to add request {req_id}: {e}")

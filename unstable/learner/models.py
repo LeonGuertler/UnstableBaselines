@@ -1,8 +1,10 @@
+import os
 import torch
 from typing import Dict, Any, Optional, Tuple
 from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig, AutoModel
 from peft.tuners.lora import LoraLayer
 from peft import LoraConfig, get_peft_model, PeftModel
+from huggingface_hub import snapshot_download
 try:                from torch.utils.checkpoint import CheckpointImpl
 except ImportError: from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import CheckpointImpl
 from torch.distributed.algorithms._checkpoint.checkpoint_wrapper import checkpoint_wrapper, apply_activation_checkpointing
@@ -35,11 +37,23 @@ def _freeze(model, ignore_substr: Optional[str] = None):
         if ignore_substr and ignore_substr in n: continue
         p.requires_grad_(False)
 
-def _load_lora_state(model, lora_path: str):
+def _resolve_checkpoint_path(path: str, revision: Optional[str] = None) -> str:
+    if os.path.exists(path): return path
+    try:
+        resolved = snapshot_download(repo_id=path, revision=revision, local_files_only=True)
+        print(f"[_resolve_checkpoint_path] ✅ Found cached HF repo '{path}' at {resolved}")
+        return resolved
+    except Exception:
+        resolved = snapshot_download(repo_id=path, revision=revision)
+        print(f"[_resolve_checkpoint_path] ✅ Downloaded HF repo '{path}' to {resolved}")
+        return resolved
+
+def _load_lora_state(model, lora_path: str, revision: Optional[str] = None):
+    resolved_path = _resolve_checkpoint_path(lora_path, revision)
     adapter_name = getattr(model, "actor_adapter_name", "default")
-    model.load_adapter(lora_path, adapter_name=adapter_name, is_trainable=True)
+    model.load_adapter(resolved_path, adapter_name=adapter_name, is_trainable=True)
     model.set_adapter(adapter_name)
-    print(f"[build_peft_model] ✅ Loaded LoRA adapter '{adapter_name}' from {lora_path}")
+    print(f"[build_peft_model] ✅ Loaded LoRA adapter '{adapter_name}' from {resolved_path}")
 
 def build_peft_model(base_name: str, device: torch.device, lora_cfg: Dict[str, Any]|None, checkpoint_cfg: Dict[str, Any]|None, freeze_base: bool=True, value_head: bool=False, value_head_prefix: str="value_head") -> Tuple[torch.nn.Module, "transformers.PreTrainedTokenizer"]:
     lora_cfg = lora_cfg or {}
@@ -58,7 +72,7 @@ def build_peft_model(base_name: str, device: torch.device, lora_cfg: Dict[str, A
         model.add_adapter(adapter_name=model.critic_adapter_name, peft_config=LoraConfig(r=lora_cfg.get("lora_rank", 32), lora_alpha=lora_cfg.get("lora_alpha", 32), lora_dropout=lora_cfg.get("lora_dropout", 0.05), 
                                                                                          bias="none", target_modules=lora_cfg.get("target_modules", ["q_proj", "k_proj", "v_proj", "o_proj"])))
         model.set_adapter(model.actor_adapter_name)
-    if checkpoint_cfg.get('path', False): _load_lora_state(model, checkpoint_cfg['path'])
+    if checkpoint_cfg.get('path', False): _load_lora_state(model, checkpoint_cfg['path'], checkpoint_cfg.get('revision'))
     return model, tok
 
 def enable_full_activation_ckpt(model):

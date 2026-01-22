@@ -64,8 +64,22 @@ TEMPLATE_PARTS = {
         "user": lambda obs: f"<|im_start|>user\n{obs}<|im_end|>\n",
         "assistant": "<|im_start|>assistant\n"
     },
+    "llama-default": {
+        "system": "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\nCutting Knowledge Date: December 2023\nToday Date: 26 Jul 2024\n\n<|eot_id|>",
+        "user": lambda obs: f"<|start_header_id|>user<|end_header_id|>\n\n{obs}<|eot_id|>\n",
+        "assistant": "<|start_header_id|>assistant<|end_header_id|>"
+    },
+    "qwen3-math-reasoning": {
+        "user": lambda obs: f"<|im_start|>user\n{obs}\nPlease reason step by step, and put your final answer within \\boxed{{}}.<|im_end|>\n",
+        "assistant": "<|im_start|>assistant\n"
+    },
+    "llama-math-reasoning": {
+        "system": "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\nCutting Knowledge Date: December 2023\nToday Date: 26 Jul 2024\n\n<|eot_id|>",
+        "user": lambda obs: f"<|start_header_id|>user<|end_header_id|>\n\n{obs}\nPlease reason step by step, and put your final answer within \\boxed{{}}.<|eot_id|>\n",
+        "assistant": "<|start_header_id|>assistant<|end_header_id|>"
+    },
     "qwen3-negotiation": {
-        "user": lambda obs: f"<|im_start|>user\nYou are playing a two-player negotiation game. \nObservation: {obs}.\nPlease reason step by step.<|im_end|>\n",
+        "user": lambda obs: f"<|im_start|>user\nYou are playing a two-player negotiation game.\nObservation: {obs}.\nPlease reason step by step.<|im_end|>\n",
         "assistant": "<|im_start|>assistant\n"
     },
     "qwen3-negotiation-instruct": {
@@ -77,7 +91,7 @@ TEMPLATE_PARTS = {
         "assistant": "<|im_start|>assistant\n"
     },
     "qwen3-zs-instruct": {
-        "user": lambda obs: f"<|im_start|>user\nYou are playing a two-player zero-sum game. Make valid actions to win.\nObservation: {obs}<|im_end|>\n",
+        "user": lambda obs: f"<|im_start|>user\nYou are playing a two-player zero-sum game. Make valid actions to win.\nObservation: {obs}\nPut your final answer within \\boxed{{}}.<|im_end|>\n",
         "assistant": "<|im_start|>assistant\n"
     },
     "qwen3-sp": {
@@ -122,5 +136,5 @@ def extract_action_and_format_feedback(raw_action: str) -> Tuple[str, Dict[str, 
     return action, format_feedback
 
 OBSERVATION_FORMATTING: Dict[str, Callable[[str], str]] = {key: (lambda key=key: lambda observation: apply_template(key, observation))() for key in TEMPLATE_PARTS}
-ACTION_EXTRACTION = {"default": extract_action_and_format_feedback}
+ACTION_EXTRACTION = {"default": extract_action_and_format_feedback, 'none': lambda raw_action: (raw_action, {})}
 DEFAULT_LORA_CFG = {"lora_rank": 32, "lora_alpha": 32, "lora_dropout": 0.0, "target_modules": ["q_proj","k_proj","v_proj","o_proj","gate_proj", "up_proj","down_proj"]}

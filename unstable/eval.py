@@ -28,7 +28,7 @@ def _launch_jobs(max_eval: int, _games_to_run, _num_running, flight, actors, opp
     except Exception as exc: logger.info(f"Exception in _launch_jobs: {exc}")
 
 
-def _handle_finished_job(ref, flight, run_name, config, adapter_checkpoint, adapter_revision, opponent_model, opponent_adapter_checkpoint, csv_path, csv_fields, output_folder, logger):
+def _handle_finished_job(ref, flight, run_name, config, adapter_checkpoint, adapter_revision, opponent_model, opponent_adapter_checkpoint, opponent_adapter_revision, csv_path, csv_fields, output_folder, logger):
     try:
         meta = flight.pop(ref)
         try: game_information, player_trajs = ray.get(ref)
@@ -46,6 +46,7 @@ def _handle_finished_job(ref, flight, run_name, config, adapter_checkpoint, adap
             "eval_model_pid": game_information.eval_model_pid,
             "opponent_model": opponent_model,
             "opponent_adapter_checkpoint": opponent_adapter_checkpoint if opponent_adapter_checkpoint is not None else "base",
+            "opponent_adapter_revision": opponent_adapter_revision if opponent_adapter_revision is not None else "iter-0",
             "env_id": meta.env_id,
             "game_idx": game_information.game_idx,
             "num_turns": num_turns,
@@ -69,15 +70,22 @@ def _handle_finished_job(ref, flight, run_name, config, adapter_checkpoint, adap
     except Exception as exc: logger.info(f"Exception in _handle_finished_job: {exc}")
 
 
-def eval(run_name: str = 'test', config: Optional[Union[Dict, str]] = 'eval',  adapter_checkpoint: Optional[str] = None, adapter_revision: Optional[str] = None, opponent_model: str = None, opponent_adapter_checkpoint: str = None, env: str = None):
+def eval(run_name: str = 'test', file_name: str = 'results', env: str = None, num_runs: int = None, config: Optional[Union[Dict, str]] = 'eval', model: str = None,  adapter_checkpoint: Optional[str] = None, adapter_revision: Optional[str] = None, opponent_model: str = None, opponent_adapter_checkpoint: str = None, opponent_adapter_revision: str = None):
     # Configuration
     if isinstance(config, str): config = get_algorithm_config(config)
+    if run_name is not None: config['run'] = run_name
     if env is not None: config["environments"][0]['env_id'] = env
+    if num_runs is not None: config['num_runs_per_env'] = num_runs
+    if model is not None: config['model_name'] = model; config['vllm_config']['model_name'] = model
     if opponent_model is not None: config["environments"][0]["fixed_opponent"] = opponent_model
     ckpt_path = adapter_checkpoint if adapter_checkpoint is not None and os.path.exists(adapter_checkpoint) else None
     if ckpt_path is None and adapter_checkpoint is not None:
         try: ckpt_path = snapshot_download(repo_id=adapter_checkpoint, revision=adapter_revision, local_files_only=True)
         except Exception: ckpt_path = snapshot_download(repo_id=adapter_checkpoint, revision=adapter_revision)
+    opponent_ckpt_path = opponent_adapter_checkpoint if opponent_adapter_checkpoint is not None and os.path.exists(opponent_adapter_checkpoint) else None
+    if opponent_ckpt_path is None and opponent_adapter_checkpoint is not None:
+        try: opponent_ckpt_path = snapshot_download(repo_id=opponent_adapter_checkpoint, revision=opponent_adapter_revision, local_files_only=True)
+        except Exception: opponent_ckpt_path = snapshot_download(repo_id=opponent_adapter_checkpoint, revision=opponent_adapter_revision)
     
     # Setup
     try:
@@ -102,9 +110,9 @@ def eval(run_name: str = 'test', config: Optional[Union[Dict, str]] = 'eval',  a
         output_folder = config.get('output_dir', 'outputs')
         output_folder = os.path.join(output_folder, run_name, config.get('model_name'))
         if not os.path.exists(output_folder): os.makedirs(output_folder, exist_ok=True)
-        csv_path = os.path.join(config.get('output_dir', 'outputs'), "results.csv")
+        csv_path = os.path.join(output_folder, f"{file_name}.csv")
         logger.info(f"csv_path: {csv_path}")
-        csv_fields = ["run", "model", "adapter_checkpoint", "adapter_revision", "eval_model_pid", "opponent_model", "opponent_adapter_checkpoint", "env_id", "game_idx", "num_turns", "eval_model_reward", "avg_opponent_reward", "info"]
+        csv_fields = ["run", "model", "adapter_checkpoint", "adapter_revision", "eval_model_pid", "opponent_model", "opponent_adapter_checkpoint", "opponent_adapter_revision", "env_id", "game_idx", "num_turns", "eval_model_reward", "avg_opponent_reward", "info"]
         with open(csv_path, "a+", newline="") as f:
             fcntl.flock(f, fcntl.LOCK_EX)
             if os.stat(csv_path).st_size == 0:
@@ -121,7 +129,7 @@ def eval(run_name: str = 'test', config: Optional[Union[Dict, str]] = 'eval',  a
             for i, pid in enumerate(pids):
                 if i == 0:  agent_specs.append(AgentSpec(pid=pid, kind="checkpoint", collect_data=False, lora_path=ckpt_path, prompt_template=_env_spec.prompt_template, action_extraction_fn=_env_spec.action_extraction_fn))
                 else:
-                    if opponent_adapter_checkpoint: agent_specs.append(AgentSpec(pid=pid, kind="checkpoint", collect_data=False, lora_path=opponent_adapter_checkpoint , prompt_template=_env_spec.prompt_template, action_extraction_fn=_env_spec.action_extraction_fn))
+                    if opponent_ckpt_path: agent_specs.append(AgentSpec(pid=pid, kind="checkpoint", collect_data=False, lora_path=opponent_ckpt_path, prompt_template=_env_spec.prompt_template, action_extraction_fn=_env_spec.action_extraction_fn))
                     else: agent_specs.append(AgentSpec(pid=pid, kind="openrouter", lora_path=None, openrouter_name=_env_spec.fixed_opponent))
             _games_to_run.append(GameSpec(game_idx=game_idx, env_id=_env_spec.env_id, seed=game_idx, agent_specs=agent_specs, eval_model_pid=pids[0], eval_opponent_name=_env_spec.fixed_opponent, error_allowance=config.get('error_allowance', 0)))
         logger.info(_games_to_run)
@@ -137,18 +145,21 @@ def eval(run_name: str = 'test', config: Optional[Union[Dict, str]] = 'eval',  a
         _launch_jobs(config['num_eval_workers'], _games_to_run, _num_running, flight, actors, opponent_adapter_checkpoint, opponent_actors, logger)
         if not flight: time.sleep(0.01); continue
         done_ref, _ = ray.wait(list(flight), num_returns=1)
-        _handle_finished_job(done_ref[0], flight, run_name, config, adapter_checkpoint, adapter_revision, opponent_model, opponent_adapter_checkpoint, csv_path, csv_fields, output_folder, logger)
+        _handle_finished_job(done_ref[0], flight, run_name, config, adapter_checkpoint, adapter_revision, opponent_model, opponent_adapter_checkpoint, opponent_adapter_revision, csv_path, csv_fields, output_folder, logger)
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--name", type=str, default="eval", help="Run name for logging.")
+    parser.add_argument("--file", type=str, default='results', help="Output file name for results.")
     parser.add_argument("--config", type=str, default="eval", help="Evaluation config file.")
-    parser.add_argument("--model", type=str, default='Qwen/Qwen3-4B-Base', help="Base model name for evaluation.")
+    parser.add_argument("--num_runs", type=int, default=None, help="Number of runs per environment.")
+    parser.add_argument("--model", type=str, default=None, help="Base model name for evaluation.")
     parser.add_argument("--adapter_checkpoint", type=str, default=None, help="Checkpoint repository name (huggingface) or local path to lora-adapters.")
     parser.add_argument("--adapter_revision", type=str, default=None, help="Checkpoint revision, if huggingface.")
     parser.add_argument("--opponent_model", type=str, default='google/gemini-2.5-flash-lite', help="Opponent model name for evaluation. Can be hf or openrouter.")
     parser.add_argument("--opponent_adapter_checkpoint", type=str, default=None, help="Evaluation checkpoint repository name (huggingface) or local path.")
+    parser.add_argument("--opponent_adapter_revision", type=str, default=None, help="Opponent checkpoint revision, if huggingface.")
     parser.add_argument("--env", type=str, default=None, help="Environment ID for evaluation.")
     args = parser.parse_args()
-    eval(run_name=args.name, config=args.config, adapter_checkpoint=args.adapter_checkpoint, adapter_revision=args.adapter_revision, opponent_model=args.opponent_model, opponent_adapter_checkpoint=args.opponent_adapter_checkpoint, env=args.env)
+    eval(run_name=args.name, file_name=args.file, env=args.env, num_runs=args.num_runs, config=args.config, model=args.model, adapter_checkpoint=args.adapter_checkpoint, adapter_revision=args.adapter_revision, opponent_model=args.opponent_model, opponent_adapter_checkpoint=args.opponent_adapter_checkpoint, opponent_adapter_revision=args.opponent_adapter_revision)

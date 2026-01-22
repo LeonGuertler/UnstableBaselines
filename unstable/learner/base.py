@@ -60,7 +60,7 @@ class BaseLearner:
         self.ckpt_dir.mkdir(parents=True, exist_ok=True)
         self.device = torch.device(f"cuda:0") if ray.get_gpu_ids() else torch.device("cpu")
         model, self.tokenizer = build_peft_model(model_name, self.device, lora_cfg, checkpoint_cfg=checkpoint_cfg, value_head=value_head)
-        if not self.use_trainer_cache:      model.config.use_cache = False
+        if not self.use_trainer_cache or gradient_checkpointing or activation_checkpointing:      model.config.use_cache = False
         if gradient_checkpointing:     model.gradient_checkpointing_enable()
         if activation_checkpointing:   enable_full_activation_ckpt(model)
         params = [{'params': [p for n, p in model.named_parameters() if f".{model.actor_adapter_name}." in n], 'lr': self.lr}]
