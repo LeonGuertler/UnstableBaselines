@@ -10,7 +10,7 @@
 
 Unstable Baselines is a **lightweight reinforcement-learning research library** focused on self-play for text-based games. 
 Through its deep integration with TextArena, it supports wide range of single and multi-player games. 
-The interface is simple and hackable. All learning algorithms run on a single GPU, making it easy to experiment, extend and customize: 
+The interface is simple and hackable, making it easy to experiment, extend and customize: 
 
 
 .. code-block:: python
@@ -32,7 +32,7 @@ The interface is simple and hackable. All learning algorithms run on a single GP
 
 .. note::
 
-   Feel free to extend this documentation and open a PR on the `GitHub repository <https://github.com/LeonGuertler/UnstableBaselines>`_.
+   Feel free to extend this documentation and open a PR on the `GitHub repository <https://github.com/TextArena/UnstableBaselines>`_.
 
 
 .. toctree::
@@ -63,7 +63,6 @@ The interface is simple and hackable. All learning algorithms run on a single GP
 
     algorithms/reinforce
     algorithms/ppo
-    algorithms/grpo
 
 .. toctree::
    :maxdepth: 2
@@ -77,6 +76,6 @@ The interface is simple and hackable. All learning algorithms run on a single GP
    :hidden:
    :caption: Our Projects
 
-    TextArena <https://github.com/LeonGuertler/TextArena>
-    Unstable Baselines <https://github.com/LeonGuertler/UnstableBaselines>
+    TextArena <https://github.com/TextArena/TextArena>
+    Unstable Baselines <https://github.com/TextArena/UnstableBaselines>
     Contribute! <introduction/contributions>

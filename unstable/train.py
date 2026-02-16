@@ -44,7 +44,7 @@ def train(config: Optional[Union[Dict, str]] = 'reinforce', interface: bool = Fa
             for env in env_sampler_config.pop('train')
         ],
         eval_env_specs=[
-            EvalEnvSpec(env_id=env['id'], num_players=env['num_players'], prompt_template=env['prompt_template'])
+            EvalEnvSpec(env_id=env['id'], num_players=env['num_players'], prompt_template=env['prompt_template'], fixed_opponent=env["fixed_opponent"])
             for env in env_sampler_config.pop('eval')
     ], **env_sampler_config)
     
@@ -53,7 +53,8 @@ def train(config: Optional[Union[Dict, str]] = 'reinforce', interface: bool = Fa
     fixed_opponents = model_sampler_config.pop('fixed_opponents') if 'fixed_opponents' in model_sampler_config else []
     model_sampler = get_model_sampler_cls(model_sampler_config.pop('type')).options(name="ModelSampler").remote(tracker=tracker, **model_sampler_config) 
     for fixed_opponent in fixed_opponents: ray.get(model_sampler.add_fixed.remote(name=fixed_opponent))
-    ray.get(model_sampler.add_checkpoint.remote(uid=checkpoint_config['uid'], path=checkpoint_config['path'], iteration=checkpoint_config['iteration']))
+    policy_ckpt = checkpoint_config['policy']
+    ray.get(model_sampler.add_checkpoint.remote(uid=policy_ckpt['uid'], path=policy_ckpt['path'], iteration=checkpoint_config['iteration']))
     
     # Replay Buffer
     replay_buffer_config = config['replay_buffer']; reward_transformations = replay_buffer_config.pop('reward_transformations'); buffer_type = replay_buffer_config.pop('type')
@@ -80,7 +81,11 @@ def train(config: Optional[Union[Dict, str]] = 'reinforce', interface: bool = Fa
     
     # Game Scheduler
     action_sampler_config = config['action_sampler']
-    game_scheduler = GameScheduler.options(name="GameScheduler").remote(vllm_config=config['vllm_config'], tracker=tracker, buffer=replay_buffer, model_sampler=model_sampler, env_sampler=env_sampler, action_sampler=action_sampler_config.pop('type'))
+    eval_config = config.get('evaluation', {})
+    game_scheduler = GameScheduler.options(name="GameScheduler").remote(
+        vllm_config=config['vllm_config'], tracker=tracker, buffer=replay_buffer, model_sampler=model_sampler, env_sampler=env_sampler, action_sampler=action_sampler_config.pop('type'),
+        eval_every=config.get('evaluation_every_iterations'), eval_runs=config.get('evaluation_runs_per_env', 64)
+    )
     
     # Run
     try:

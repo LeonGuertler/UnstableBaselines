@@ -1,24 +1,6 @@
 Quickstart
 ==========
 
-Command-Line Interface
-""""""""""""""""""""""
-
-You can load any trainings configuration. You can use a provided configuration for REINFORCE, A2C, PPO, GRPO, DPO, or a custom one. 
-
-.. code-block:: bash
-
-    unstable-baselines --config reinforce
-
-We provide default configurations for all algorithms which are easy to modify. You can run a monitoring command-line interface using --monitor.
-In this case, the dashboard will block any console output and will only display the information shown. 
-
-.. raw:: html
-
-    <div align="center">
-        <img style="width: 800px;" src="../_static/terminal_interface.gif" />
-    </div>
-
 Python
 """"""
 

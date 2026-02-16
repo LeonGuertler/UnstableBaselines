@@ -24,14 +24,14 @@ An Async, Online, Multi-Turn, Multi-Agent RL library for training reasoning mode
 
 
 ### Why Unstable Baselines?
-UnstableBaselines is an Async-, Online-, Multi-Agent RL library focused on simplicity and hackability. Since multiple recent papers showed the sufficiency of LoRA for reasoning tuning, and the fact that opponent sampling for self-play strategies beyond mirror self-play work best when using LoRA weights (since vLLM allows for hot-swapping), we built UnstableBaselines as a LoRA first RL library. We tried to keep the code as straight forward as possible. It is currently around **1.2K** lines long, semi-readable and all our learners run on a **single GPU**. The main focus of unstable-baselines is to enable fast prototyping/research. For something a bit more production ready we recommend to use [oat](https://github.com/sail-sg/oat) or [verifiers](https://github.com/willccbb/verifiers).
+UnstableBaselines is an Async-, Online-, Multi-Agent RL library focused on simplicity and hackability. Since multiple recent papers showed the sufficiency of LoRA for reasoning tuning, and the fact that opponent sampling for self-play strategies beyond mirror self-play work best when using LoRA weights (since vLLM allows for hot-swapping), we built UnstableBaselines as a LoRA first RL library. We tried to keep the code as straight forward as possible. The main focus of unstable-baselines is to enable fast prototyping/research. For something a bit more production ready we recommend to use [oat](https://github.com/sail-sg/oat) or [verifiers](https://github.com/willccbb/verifiers).
 
 
 ### Key Features
 * **Asynchronous collection & learning** – actors generate data while learners train.
-* **Multi‑agent, multi‑turn** focus with self‑play or fixed opponents.
+* **Multi‑agent, multi‑turn** focus on self‑play.
 * **LoRA‑first** fine‑tuning workflow for fast, lightweight updates.
-* **Accessability** All our learners can train on a single GPU!
+* **Accessability** with easily hackable code and small language models.
 * **Composable reward transforms** at step, game, and sampling stages.
 
 
@@ -42,7 +42,7 @@ pip3 install unstable-rl
 ```
 and run Unstable Baselines from the command-line interface:
 ```bash
-python -m unstable.train --config ppo
+python -m unstable.train --config reinforce
 ```
 
 

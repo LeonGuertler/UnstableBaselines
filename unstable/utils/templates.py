@@ -12,7 +12,6 @@ def get_learner_cls(algorithm: str) -> type:
     import unstable.learner
     match algorithm:
         case "reinforce": return unstable.learner.reinforce.REINFORCELearner
-        case "reinforce-async": return unstable.learner.reinforce_asnyc.REINFORCEAsyncLearner
         case "ppo": return unstable.learner.ppo.PPOLearner
         case "grpo": return unstable.learner.grpo.GRPOLearner
         case _: raise ValueError(f"Algorithm {algorithm} not found")
@@ -69,11 +68,11 @@ TEMPLATE_PARTS = {
         "user": lambda obs: f"<|start_header_id|>user<|end_header_id|>\n\n{obs}<|eot_id|>\n",
         "assistant": "<|start_header_id|>assistant<|end_header_id|>"
     },
-    "qwen3-math-reasoning": {
+    "qwen3-math": {
         "user": lambda obs: f"<|im_start|>user\n{obs}\nPlease reason step by step, and put your final answer within \\boxed{{}}.<|im_end|>\n",
         "assistant": "<|im_start|>assistant\n"
     },
-    "llama-math-reasoning": {
+    "llama-math": {
         "system": "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\nCutting Knowledge Date: December 2023\nToday Date: 26 Jul 2024\n\n<|eot_id|>",
         "user": lambda obs: f"<|start_header_id|>user<|end_header_id|>\n\n{obs}\nPlease reason step by step, and put your final answer within \\boxed{{}}.<|eot_id|>\n",
         "assistant": "<|start_header_id|>assistant<|end_header_id|>"
@@ -82,34 +81,17 @@ TEMPLATE_PARTS = {
         "user": lambda obs: f"<|im_start|>user\nYou are playing a two-player negotiation game.\nObservation: {obs}.\nPlease reason step by step.<|im_end|>\n",
         "assistant": "<|im_start|>assistant\n"
     },
-    "qwen3-negotiation-instruct": {
-        "user": lambda obs: f"<|im_start|>user\nYou are playing a two-player negotiation game. \nObservation: {obs}.<|im_end|>\n",
-        "assistant": "<|im_start|>assistant\n"
-    },
     "qwen3-zs": {
         "user": lambda obs: f"<|im_start|>user\nYou are playing a two-player zero-sum game. Make valid actions to win.\nObservation: {obs}\nPlease reason step by step, and put your final answer within \\boxed{{}}.<|im_end|>\n",
-        "assistant": "<|im_start|>assistant\n"
-    },
-    "qwen3-zs-instruct": {
-        "user": lambda obs: f"<|im_start|>user\nYou are playing a two-player zero-sum game. Make valid actions to win.\nObservation: {obs}\nPut your final answer within \\boxed{{}}.<|im_end|>\n",
         "assistant": "<|im_start|>assistant\n"
     },
     "qwen3-sp": {
         "user": lambda obs:  f"<|im_start|>user\nYou are playing a single-player game. Make valid actions to solve it completely.\nObservation: {obs}\nPlease reason step by step, and put your final answer within \\boxed{{}}.<|im_end|>\n",
         "assistant": "<|im_start|>assistant\n"
     },
-    "qwen3-sp-instruct": {
-        "user": lambda obs:  f"<|im_start|>user\nYou are playing a single-player game. Make valid actions to solve it completely.\nObservation: {obs}<|im_end|>\n",
-        "assistant": "<|im_start|>assistant\n"
-    },
     "gemma3-zs": {
         "user": lambda obs: f"<bos><start_of_turn>user\nYou are playing a two-player zero-sum game. Make valid actions to win.\nObservation: {obs}\nPlease reason step by step, and put your final answer within \\boxed{{}}.<end_of_turn>\n",
         "assistant": "<start_of_turn>model\n"
-    },
-    "llama-instruct-zs": {
-        "system": "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\nYou are playing a two-player zero-sum game. Make valid actions to win.<|eot_id|>",
-        "user": lambda obs: f"<|start_header_id|>user<|end_header_id|>\n\nCurrent Observation: {obs}\nPlease reason step by step, and put your final answer within \\boxed{{}}.<|eot_id|>\n",
-        "assistant": "<|start_header_id|>assistant<|end_header_id|>"
     },
 }
 

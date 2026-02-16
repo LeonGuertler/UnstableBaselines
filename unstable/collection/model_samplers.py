@@ -7,13 +7,19 @@ from unstable.utils._types import GameInformation, ModelMeta
 from unstable.utils.logger import setup_logger
 
 class BaseModelSampler:
-    def __init__(self, tracker, beta: float = 4.0): 
+    def __init__(self, tracker, beta: float = 4.0,
+                 opponent_temperature: float = None, opponent_top_p: float = None,
+                 opponent_top_k: int = None, opponent_max_tokens: int = None):
         self.TS = trueskill.TrueSkill(beta=beta)
         self._db: dict[str, ModelMeta] = {}
         self._match_counts = defaultdict(int)
         self._exploration = defaultdict(lambda: defaultdict(dict))
         self._current_ckpt_uid : str | None = None; self.active_ckpt = deque()
         self._tracker = tracker; self._update_step: int = 1; 
+        self._opp_temperature = opponent_temperature
+        self._opp_top_p = opponent_top_p
+        self._opp_top_k = opponent_top_k
+        self._opp_max_tokens = opponent_max_tokens
         self.logger = setup_logger("model_sampler", ray.get(self._tracker.get_log_dir.remote()))
 
     @staticmethod
@@ -67,6 +73,10 @@ class BaseModelSampler:
         # push to tracker every n update steps
         if not self._update_step%10: self._tracker.log_model_sampler.remote(ts_dict={uid: asdict(meta) for uid, meta in self._db.items()}, match_counts=copy.deepcopy(self._match_counts))
 
+    def get_opponent_sampling_params(self) -> dict:
+        return {"temperature": self._opp_temperature, "top_p": self._opp_top_p,
+                "top_k": self._opp_top_k, "max_tokens": self._opp_max_tokens}
+
     def sample_opponent(self): raise NotImplementedError 
 
 
@@ -79,7 +89,7 @@ class MirrorModelSampler(BaseModelSampler):
         current_uid = self.get_current_ckpt()[0]
         opponent_meta = self._db[current_uid]
         self.logger.info(f"sampling mirror opponent: {opponent_meta.uid}")
-        return opponent_meta.uid, opponent_meta.kind, None, opponent_meta.path_or_name
+        return opponent_meta.uid, opponent_meta.kind, None, opponent_meta.path_or_name, self.get_opponent_sampling_params()
     
 @ray.remote
 class FixedOpponentModelSampler(BaseModelSampler):
@@ -91,7 +101,7 @@ class FixedOpponentModelSampler(BaseModelSampler):
         available_models = [model_meta for uid, model_meta in self.get_all_models().items() if (model_meta.active and model_meta.kind=="fixed") or (model_meta.uid==self.get_current_ckpt() and self.include_current_ckpt)]
         opponent_meta = random.choice(available_models)
         self.logger.info(f"sampling fixed opponent: {opponent_meta.uid}")
-        return opponent_meta.uid, opponent_meta.kind, None, opponent_meta.path_or_name
+        return opponent_meta.uid, opponent_meta.kind, None, opponent_meta.path_or_name, self.get_opponent_sampling_params()
 
 
 @ray.remote
@@ -109,7 +119,7 @@ class AsynchronousModelSampler(BaseModelSampler):
     def sample_opponent(self): 
         opponent_meta = random.choice([model_meta for uid, model_meta in self.get_all_models().items() if (model_meta.active and model_meta.kind=="checkpoint")])
         self.logger.info(f"sampling opponent: {opponent_meta.uid}")
-        return opponent_meta.uid, opponent_meta.kind, None, opponent_meta.path_or_name
+        return opponent_meta.uid, opponent_meta.kind, None, opponent_meta.path_or_name, self.get_opponent_sampling_params()
     
 
 @ray.remote
@@ -138,7 +148,7 @@ class WinRateModelSampler(BaseModelSampler):
     def sample_opponent(self):
         if self._current_opponent_meta is None: self._current_opponent_meta = self._db[self._current_ckpt_uid]
         self.logger.info(f"sampling opponent: {self._current_opponent_meta.uid}, current win rate: {sum(self._recent_outcomes)}/{len(self._recent_outcomes)}")
-        return self._current_opponent_meta.uid, self._current_opponent_meta.kind, None, self._current_opponent_meta.path_or_name
+        return self._current_opponent_meta.uid, self._current_opponent_meta.kind, None, self._current_opponent_meta.path_or_name, self.get_opponent_sampling_params()
 
     def _current_win_rate(self) -> float:  return sum(self._recent_outcomes) / len(self._recent_outcomes) if self._recent_outcomes else 0.0
     def _should_rotate(self): return self._current_win_rate() > self.threshold

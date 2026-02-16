@@ -14,9 +14,9 @@ from unstable.utils.misc import write_game_information_to_file
 
 @ray.remote(num_cpus=0)
 def run_game(game_spec: GameSpec, actor: Union["VLLMActor", dict[int, "VLLMActor"]]):
-    game_information = GameInformation(game_idx=game_spec.game_idx, env_id=game_spec.env_id, eval_model_pid=game_spec.eval_model_pid, eval_opponent_name=game_spec.eval_opponent_name)
+    game_information = GameInformation(game_idx=game_spec.game_idx, env_id=game_spec.env_id, eval_model_pid=game_spec.eval_model_pid, eval_opponent_name=game_spec.eval_opponent_name, eval_iteration=game_spec.eval_iteration)
     agents = {agent_spec.pid: {
-        "traj": PlayerTrajectory(pid=agent_spec.pid) if agent_spec.collect_data else None, 
+        "traj": PlayerTrajectory(pid=agent_spec.pid) if agent_spec.collect_data else None,
         "name": agent_spec.lora_path if agent_spec.lora_path else agent_spec.openrouter_name,
         "model": get_action_sampler_cls(agent_spec.sampler)(
             CallableActorWrapper(
@@ -24,6 +24,10 @@ def run_game(game_spec: GameSpec, actor: Union["VLLMActor", dict[int, "VLLMActor
                 lora_path=agent_spec.lora_path,
                 obs_fmt_fn=OBSERVATION_FORMATTING[agent_spec.prompt_template],
                 extract_fn=ACTION_EXTRACTION[agent_spec.action_extraction_fn],
+                temperature=agent_spec.temperature,
+                top_p=agent_spec.top_p,
+                top_k=agent_spec.top_k,
+                max_tokens=agent_spec.max_tokens,
             ) if agent_spec.openrouter_name == None else ta.agents.OpenRouterAgent(agent_spec.openrouter_name)
         )
     } for agent_spec in game_spec.agent_specs} # build agents
@@ -53,7 +57,7 @@ def run_game(game_spec: GameSpec, actor: Union["VLLMActor", dict[int, "VLLMActor
 
 @ray.remote
 class GameScheduler:
-    def __init__(self, vllm_config, tracker, buffer, model_sampler, env_sampler, action_sampler: str = "default"):
+    def __init__(self, vllm_config, tracker, buffer, model_sampler, env_sampler, action_sampler: str = "default", eval_every: Optional[int] = None, eval_runs: int = 64):
         self.logger = setup_logger("game_scheduler", ray.get(tracker.get_log_dir.remote()))
         self.tracker, self.buffer = tracker, buffer
         self.model_sampler = model_sampler
@@ -65,6 +69,9 @@ class GameScheduler:
         self.local_storage_dir = ray.get(self.tracker.get_collection_dir.remote())
         self._game_idx = 0
         self._running_jobs = {}
+        self.eval_every = eval_every
+        self.eval_runs = eval_runs
+        self._eval_iteration = 0
 
         # thead keeping
         self.flight: Dict[ray.ObjectRef, TaskMeta] = {}
@@ -81,27 +88,35 @@ class GameScheduler:
             self._handle_finished_job(done_ref[0])
         
     def _launch_jobs(self, max_train: int, max_eval: Optional[int]):
-        while self._num_running("train") < max_train: # submit new train game
+        # Train
+        while self._num_running("train") < max_train:
             game_spec: Optional[GameSpec] = None
             try:
-                game_spec = self._next_train_job()  # sample game spec locally
+                game_spec = self._next_train_job()
                 self.logger.info(f"received train game_spec: {game_spec}")
-                actor: VLLMActor = next(self._actor_iter) # get actor
+                actor: VLLMActor = next(self._actor_iter)
                 ref = run_game.remote(game_spec, actor)
                 self.flight[ref] = TaskMeta("train", game_spec.env_id)
             except Exception as exc:
                 self.logger.info(f"Exception scheduling train game: {exc}")
 
-        while max_eval is not None and self._num_running("eval") < max_eval:
-            game_spec: Optional[GameSpec] = None
+        # Eval
+        if max_eval is None or max_eval == 0: return
+        game_specs = None
+        if self.eval_every is not None:
+            learner_step = ray.get(self.tracker.get_learner_step.remote())
+            if learner_step % self.eval_every == 0 and (learner_step != self._eval_iteration or self._eval_iteration == 0):
+                self._eval_iteration = learner_step
+                game_specs = [self._next_eval_job() for _ in range(self.eval_runs)]
+                self.logger.info(f"Triggering eval iteration {self._eval_iteration} at learner step {learner_step}")
+        while (game_specs is None or len(game_specs) > 0) and self._num_running("eval") < max_eval:
             try:
-                game_spec = self._next_eval_job()  # sample game spec locally
+                game_spec = game_specs.pop() if game_specs else self._next_eval_job()
                 self.logger.info(f"received eval game_spec: {game_spec}")
                 actor: VLLMActor = next(self._actor_iter) # get actor
                 ref = run_game.remote(game_spec, actor)
                 self.flight[ref] = TaskMeta("eval", game_spec.env_id)
-            except Exception as exc:
-                self.logger.info(f"Exception scheduling eval game: {exc}")
+            except Exception as exc: self.logger.info(f"Exception scheduling eval game: {exc}")
 
     def _handle_finished_job(self, ref):
         meta = self.flight.pop(ref)
@@ -122,9 +137,10 @@ class GameScheduler:
                     self._running_jobs[self._game_idx]["models"].append({"uid": current_ckpt_uid, "pid": pid, "type": "model"})
                     agent_specs.append(AgentSpec(pid=pid, kind="checkpoint", collect_data=True, lora_path=current_ckpt_lora_path, prompt_template=env_spec.prompt_template, action_extraction_fn=env_spec.action_extraction_fn))
                 else:
-                    opp_uid, kind, opp_lora_path, opp_name_or_path = ray.get(self.model_sampler.sample_opponent.remote())
-                    if kind == "checkpoint": agent_specs.append(AgentSpec(pid=pid, kind="checkpoint", collect_data=False, lora_path=opp_name_or_path, prompt_template=env_spec.prompt_template, action_extraction_fn=env_spec.action_extraction_fn))
-                    else: agent_specs.append(AgentSpec(pid=pid, kind=kind, lora_path=opp_lora_path, openrouter_name=opp_name_or_path)) # TODO might have to adjust what is passed
+                    opp_uid, kind, opp_lora_path, opp_name_or_path, opp_sampling = ray.get(self.model_sampler.sample_opponent.remote())
+                    if kind == "checkpoint": agent_specs.append(AgentSpec(pid=pid, kind="checkpoint", collect_data=False, lora_path=opp_name_or_path, prompt_template=env_spec.prompt_template, action_extraction_fn=env_spec.action_extraction_fn,
+                                                                          temperature=opp_sampling.get("temperature"), top_p=opp_sampling.get("top_p"), top_k=opp_sampling.get("top_k"), max_tokens=opp_sampling.get("max_tokens")))
+                    else: agent_specs.append(AgentSpec(pid=pid, kind=kind, lora_path=opp_lora_path, openrouter_name=opp_name_or_path)) # OpenRouter agents handle their own sampling
                     self._running_jobs[self._game_idx]["models"].append({"uid": opp_uid, "pid": pid, "type": "opponent"})
             game_spec = GameSpec(game_idx=self._game_idx, env_id=env_spec.env_id, seed=self._game_idx, agent_specs=agent_specs) # populate GameSpec
             self._game_idx += 1
@@ -157,12 +173,13 @@ class GameScheduler:
             for i, pid in enumerate(pids):
                 if i == 0:  agent_specs.append(AgentSpec(pid=pid, kind="checkpoint", collect_data=True, lora_path=current_ckpt_lora_path, prompt_template=env_spec.prompt_template, action_extraction_fn=env_spec.action_extraction_fn, sampler=self.action_sampler)) # only one actor, rest fixed
                 else:       agent_specs.append(AgentSpec(pid=pid, kind="openrouter", lora_path=None, openrouter_name=env_spec.fixed_opponent, sampler=self.action_sampler))
-            game_spec = GameSpec(game_idx=self._game_idx, env_id=env_spec.env_id, seed=self._game_idx, agent_specs=agent_specs, eval_model_pid=pids[0], eval_opponent_name=env_spec.fixed_opponent) # populate GameSpec
+            game_spec = GameSpec(game_idx=self._game_idx, env_id=env_spec.env_id, seed=self._game_idx, agent_specs=agent_specs, eval_model_pid=pids[0], eval_opponent_name=env_spec.fixed_opponent, eval_iteration=self._eval_iteration) # populate GameSpec
+            self._game_idx += 1
             return game_spec
         except Exception as exc:
             self.logger.info(f"Exception in 'next_eval_job': {exc}")
-            import time 
+            import time
             time.sleep(500)
     
     def _post_eval(self, meta: TaskMeta, game_information: GameInformation):
-        self.tracker.add_eval_game_information.remote(game_information=game_information, env_id=meta.env_id)
+        self.tracker.add_eval_game_information.remote(game_information=game_information, env_id=meta.env_id, aggregate=self.eval_runs if self.eval_every else None)

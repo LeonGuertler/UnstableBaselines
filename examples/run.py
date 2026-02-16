@@ -29,7 +29,7 @@ if __name__ == "__main__":
         {
             "id": env_id,
             "num_players": 2,
-            "num_actors": 2,
+            "num_actors": 1,
             "prompt_template": args.template,
         }
         for env_id in env_ids

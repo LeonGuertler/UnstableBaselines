@@ -60,8 +60,9 @@ class GameInformation:
     names:                  Dict[int, str] = field(default_factory=dict)
     eval_model_pid:         Optional[int] = None
     eval_opponent_name:     Optional[str] = None
+    eval_iteration:         Optional[int] = None
 
-@dataclass 
+@dataclass
 class AgentSpec:
     pid: int
     kind: str # "checkpoint" | "openrouter"
@@ -71,6 +72,10 @@ class AgentSpec:
     prompt_template: str = "default" # prompt template key
     action_extraction_fn: str = "default"
     sampler: str = "default" # "majority_voting" | "random" | "default"
+    temperature: float|None = None
+    top_p: float|None = None
+    top_k: int|None = None
+    max_tokens: int|None = None
 
 @dataclass
 class GameSpec:
@@ -81,6 +86,7 @@ class GameSpec:
     error_allowance: int = 0
     eval_model_pid: Optional[int] = None
     eval_opponent_name: Optional[str] = None
+    eval_iteration: Optional[int] = None
 
 @dataclass
 class TaskMeta:

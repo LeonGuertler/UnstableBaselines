@@ -1,16 +1,23 @@
 REINFORCE
 =========
 
-**REINFORCE** is a policy gradient algorithm that directly maximizes the expected return of a completion by the policy: 
+**REINFORCE** is a policy gradient algorithm that directly maximizes the expected return of a completion by the policy.
+We optimize the following loss with off-policy importance sampling correction:
 
 .. math::
 
-   \nabla_\theta J(\theta)_i =
-   \mathbb{E}_{\tau \sim \pi_\theta}\left[
-      R_i
-      \sum_{t=0}^T
-      \nabla_\theta \log \pi_\theta(a_{i,t} \mid s_{i,t})\, 
-   \right]
+   \mathcal{L}_{\text{REINFORCE}}(\theta)
+   = -\frac{1}{N} \sum_{i=1}^{N}
+     A_i \,
+     \pi_\theta(a_i \mid s_i)
+
+where:
+
+.. math::
+
+   \log \pi_\theta(a_i \mid s_i)
+   = \sum_{t=1}^{T_i}
+     \log \pi_\theta(a_{i,t} \mid s_{i,t})
 
 .. admonition:: Rolling Advantage Estimation
    :class: tip
@@ -34,11 +41,13 @@ REINFORCE
 
 Hyperparameters
 """""""""""""""
+**epochs: int (default: 2)**
+  Number of epochs to train the policy.
 **local_batch_size: int (default: 384)**
   Per-GPU batch size.
 **micro_batch_size: int (default: 1)**
   The micro batch size used during training.
-**learning_rate: float (default: 1e-5)**
+**learning_rate: float (default: 1e-6)**
   Learning rate for the policy.
 **lr_scheduler_type: str (default: "constant")**
   Learning rate scheduler type.
@@ -46,3 +55,5 @@ Hyperparameters
   Learning rate warmup ratio.
 **grad_clip: float (default: 0.2)**
   Gradient clipping value for the policy.
+**kl_coef: float (default: 0.0)**
+  Coefficient for KL divergence penalty against the reference model.

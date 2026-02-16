@@ -1,7 +1,8 @@
 run: "UB-eval"
 project: "Benchmarking-Eval"
 model_name: &model_name "Qwen/Qwen3-4B-Base"
-num_eval_workers: 64
+num_eval_workers: 128
+num_actors: 4
 output_dir: "outputs/game_eval/results"
 
 environments:
@@ -9,7 +10,7 @@ environments:
     num_players: 2
     prompt_template: "qwen3-zs"
     fixed_opponent: "google/gemini-2.0-flash-lite-001"
-num_runs_per_env: 64
+num_runs_per_env: 128
 error_allowance: 1
 
 vllm_config:

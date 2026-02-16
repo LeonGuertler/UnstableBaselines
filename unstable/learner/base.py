@@ -3,6 +3,7 @@ from ray.experimental.internal_kv import _internal_kv_put, _internal_kv_get, _in
 from ray.util import get_node_ip_address as _ray_ip
 from typing import Dict, Any, Optional, List
 from transformers import get_scheduler
+import deepspeed
 
 from unstable.collection.buffers import BaseBuffer
 from unstable.collection.trackers import BaseTracker
@@ -29,7 +30,6 @@ class BaseLearner:
         max_generation_len: Optional[int] = None,
         max_train_len: Optional[int] = None,
         use_trainer_cache: bool=False, 
-        value_head: bool=False, 
         initial_lora_path: Optional[str]=None,
         zero_optimization: Optional[Dict[str,Any]]=None,
         gradient_checkpointing: bool = False,
@@ -44,6 +44,8 @@ class BaseLearner:
         self.lora_cfg = lora_cfg; self.initial_lora_path = initial_lora_path
         self.buffer, self.tracker, self.model_sampler = buffer, tracker, model_sampler
         self.logger = setup_logger(f"learner-{rank}", ray.get(tracker.get_log_dir.remote()))
+        self.checkpoint_cfg = checkpoint_cfg
+        self.lora_cfg = lora_cfg
         self.use_trainer_cache = use_trainer_cache
         self.max_generation_len = max_generation_len
         self.max_train_len = max_train_len
@@ -59,48 +61,54 @@ class BaseLearner:
         self.ckpt_dir = pathlib.Path(ray.get(self.tracker.get_checkpoints_dir.remote()))
         self.ckpt_dir.mkdir(parents=True, exist_ok=True)
         self.device = torch.device(f"cuda:0") if ray.get_gpu_ids() else torch.device("cpu")
-        model, self.tokenizer = build_peft_model(model_name, self.device, lora_cfg, checkpoint_cfg=checkpoint_cfg, value_head=value_head)
+        model, self.tokenizer = build_peft_model(model_name, self.device, lora_cfg, checkpoint_cfg=self.checkpoint_cfg.get('policy', {}), value_head=False)
         if not self.use_trainer_cache or gradient_checkpointing or activation_checkpointing:      model.config.use_cache = False
         if gradient_checkpointing:     model.gradient_checkpointing_enable()
         if activation_checkpointing:   enable_full_activation_ckpt(model)
-        params = [{'params': [p for n, p in model.named_parameters() if f".{model.actor_adapter_name}." in n], 'lr': self.lr}]
-        self.optimizer = torch.optim.AdamW(params, lr=self.lr, fused=True)
-        total_optimizer_steps = int(self.total_training_steps * self.epochs)
-        self.lr_scheduler = get_scheduler(lr_scheduler_type, self.optimizer, num_warmup_steps=int(lr_warmup_ratio * total_optimizer_steps), num_training_steps=total_optimizer_steps)
+        self._policy_params = [p for n, p in model.named_parameters() if f".{model.adapter_name}." in n and p.requires_grad]
+        self.optimizer = torch.optim.AdamW(self._policy_params, lr=self.lr, fused=True)
+        self.total_optimizer_steps = int(self.total_training_steps * self.epochs)
+        self.lr_scheduler = get_scheduler(lr_scheduler_type, self.optimizer, num_warmup_steps=int(lr_warmup_ratio * self.total_optimizer_steps), num_training_steps=self.total_optimizer_steps)
         # DeepSpeed
-        import deepspeed; self.logger.info(f"Initializing DeepSpeed with rank: {rank}, world_size: {world_size}")
-        if rank == 0: 
+        self.rank = rank; self.world_size = world_size
+        self.zero_optimization = zero_optimization
+        if self.rank == 0: 
             master_node = {'address': _ray_ip(), 'port': random.randint(20000, 40000)}
             _internal_kv_put("learner/master_node", json.dumps(master_node).encode("utf-8"), overwrite=True, namespace="")
         else: 
             while not bool(_internal_kv_exists("learner/master_node", namespace="")): time.sleep(1)
             master_node = json.loads(_internal_kv_get("learner/master_node", namespace="").decode("utf-8"))
         os.environ["MASTER_ADDR"] = master_node['address']; os.environ["MASTER_PORT"] = str(master_node['port']); 
-        os.environ['RANK'] = str(rank); os.environ['LOCAL_RANK'] = '0'; os.environ['WORLD_SIZE'] = str(world_size)
-        deepspeed.init_distributed(dist_backend="nccl", rank=rank, world_size=world_size, auto_mpi_discovery=False)
-        self.engine, self.actor_optimizer, _, self.actor_lr_scheduler = deepspeed.initialize(
+        os.environ['RANK'] = str(self.rank); os.environ['LOCAL_RANK'] = '0'; os.environ['WORLD_SIZE'] = str(self.world_size)
+        deepspeed.init_distributed(dist_backend="nccl", rank=self.rank, world_size=self.world_size, auto_mpi_discovery=False)
+        self.engine, self.actor_optimizer, _, self.actor_lr_scheduler = self.init_distributed_training(model, self.optimizer)
+        self.logger.info("DeepSpeed initialized successfully")
+        self.model = self.engine.module; self.rank = self.rank; self.world_size = self.world_size; self._step = checkpoint_cfg['iteration']+1; self._samples_seen = self._step * self.local_batch_size
+
+    def init_distributed_training(self, model, optimizer):
+        self.logger.info(f"Initializing DeepSpeed Engine with rank: {self.rank}, world_size: {self.world_size}")
+        return deepspeed.initialize(
             model=model,
-            model_parameters=params,
-            optimizer=self.optimizer,
-            lr_scheduler=self.lr_scheduler,
+            optimizer=optimizer,
             config={
-                "train_batch_size": world_size*self.local_batch_size,
+                "train_batch_size": self.world_size*self.local_batch_size,
                 "train_micro_batch_size_per_gpu": self.micro_batch_size,
                 "gradient_accumulation_steps": self.grad_accumulation_steps,
                 "gradient_clipping": self.grad_clip,
-                "zero_optimization": zero_optimization if zero_optimization is not None else {"stage": 1},
+                "zero_optimization": self.zero_optimization if self.zero_optimization is not None else {"stage": 0},
                 "bf16": {"enabled": True},
-                "prescale_gradients": False,
                 "steps_per_print": 100
             }
         )
-        self.logger.info("DeepSpeed initialized successfully")
-        self.model = self.engine.module; self.rank = rank; self.world_size = world_size; self._step = checkpoint_cfg['iteration']+1; self._samples_seen = self._step * self.local_batch_size
+
 
     def _prepare_batch(self, steps):
-        prompt_ids, completion_ids, advs, vllm_logprobs = zip(*[(s.prompt_ids, s.completion_ids, s.reward, s.completion_logprobs) for s in steps])
-        input_ids = self._zero_pad_right([torch.tensor(pid+cid, dtype=torch.long) for pid, cid in zip(prompt_ids, completion_ids)]).to(self.device)
-        advs = torch.tensor(advs, dtype=torch.float32, device=self.device)
+        raw_prompt_ids, completion_ids, rewards, vllm_logprobs, returns = zip(*[(s.prompt_ids, s.completion_ids, s.reward, s.completion_logprobs, s.step_info.get("return", 0.0)) for s in steps])
+        prompt_ids = self._zero_pad_right([torch.tensor(pid, dtype=torch.long) for pid in raw_prompt_ids]).to(self.device)
+        prompt_attention_mask = self._zero_pad_right([torch.ones(len(pid), dtype=torch.long) for pid in raw_prompt_ids]).to(self.device)
+        input_ids = self._zero_pad_right([torch.tensor(pid+cid, dtype=torch.long) for pid, cid in zip(raw_prompt_ids, completion_ids)]).to(self.device)
+        rewards = torch.tensor(rewards, dtype=torch.float32, device=self.device)
+        returns = torch.tensor(returns, dtype=torch.float32, device=self.device)
         vllm_logprobs = self._zero_pad_right([torch.tensor(vllm_logprobs, dtype=torch.float32, device=self.device) for vllm_logprobs in vllm_logprobs]).to(self.device)
         lengths = [len(step.prompt_ids) + len(step.completion_ids) for step in steps]
         prompt_lengths = [len(step.prompt_ids) for step in steps]
@@ -111,7 +119,7 @@ class BaseLearner:
         response_mask = completion_mask[:, 1:]
         vllm_logprobs = self._zero_pad_right(vllm_logprobs)
         pct_truncated = sum(l > self.max_train_len for l in lengths) / len(lengths) if self.max_train_len else 0
-        return input_ids, advs, vllm_logprobs, lengths, attention_mask, response_mask, pct_truncated
+        return prompt_ids, prompt_attention_mask, input_ids, rewards, vllm_logprobs, lengths, attention_mask, response_mask, pct_truncated, returns
 
     def _update(self, batch):               raise NotImplementedError
     def train(self, iterations: int):
@@ -150,6 +158,8 @@ class BaseLearner:
         ckpt_dir = self.ckpt_dir / f"iteration-{self._step}"
         ckpt_dir.mkdir(parents=True, exist_ok=True)
         self.model.save_pretrained(ckpt_dir, save_adapter=True)
+        vh = getattr(self.model.base_model, "value_head", None)
+        if vh is not None: torch.save(vh.state_dict(), ckpt_dir / "value_head.pt")
         return ckpt_dir
 
     def _masked_mean(self, x, mask, axis=None): return (x * mask).sum(dim=axis) / mask.sum(dim=axis) if axis is not None else (x * mask).sum() / mask.sum()

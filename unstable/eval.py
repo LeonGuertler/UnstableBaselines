@@ -15,14 +15,14 @@ from unstable.collection.game_scheduler import run_game
 from unstable.utils.templates import get_algorithm_config
 
 
-def _launch_jobs(max_eval: int, _games_to_run, _num_running, flight, actors, opponent_adapter_checkpoint, opponent_actors, logger):
+def _launch_jobs(max_eval: int, _games_to_run, _num_running, flight, actors, logger):
     try:
         while _num_running("eval") < max_eval and _games_to_run:
             try:
-                actor = next(actors); opponent_actor = next(opponent_actors) if opponent_adapter_checkpoint else None
+                actor = next(actors)
                 game_spec = _games_to_run.popleft()
                 logger.info(f"received eval game_spec: {game_spec}")
-                ref = run_game.remote(game_spec, actor if not opponent_adapter_checkpoint else {spec.pid: (actor if spec.pid == game_spec.eval_model_pid else opponent_actor) for spec in game_spec.agent_specs})
+                ref = run_game.remote(game_spec, actor)
                 flight[ref] = TaskMeta("eval", game_spec.env_id)
             except Exception as exc: logger.info(f"Exception in eval game {game_spec}: {exc}")
     except Exception as exc: logger.info(f"Exception in _launch_jobs: {exc}")
@@ -100,11 +100,6 @@ def eval(run_name: str = 'test', file_name: str = 'results', env: str = None, nu
         actors = [VLLMActor.options(num_gpus=1).remote(cfg=config['vllm_config'], tracker=tracker, name=f"Actor-{i}") for i in range(config.get('num_actors', 1))]
         for actor in actors: ray.get(actor.ready.remote())
         actors = itertools.cycle(actors)
-        opponent_vllm_config = config["vllm_config"].copy(); opponent_vllm_config["model_name"] = opponent_model
-        opponent_actors = [VLLMActor.options(num_gpus=1).remote(cfg=opponent_vllm_config, tracker=tracker, name=f"Eval-Actor-{i}") if opponent_adapter_checkpoint else None for i in range(config.get('num_actors', 1))]
-        for actor in opponent_actors: 
-            if actor is not None: ray.get(actor.ready.remote())
-        opponent_actors = itertools.cycle([actor for actor in opponent_actors if actor is not None])
 
         # Results Logging
         output_folder = config.get('output_dir', 'outputs')
@@ -142,7 +137,7 @@ def eval(run_name: str = 'test', file_name: str = 'results', env: str = None, nu
     # Run
     while _games_to_run or flight:
         logger.info("entered collect loop")
-        _launch_jobs(config['num_eval_workers'], _games_to_run, _num_running, flight, actors, opponent_adapter_checkpoint, opponent_actors, logger)
+        _launch_jobs(config['num_eval_workers'], _games_to_run, _num_running, flight, actors, logger)
         if not flight: time.sleep(0.01); continue
         done_ref, _ = ray.wait(list(flight), num_returns=1)
         _handle_finished_job(done_ref[0], flight, run_name, config, adapter_checkpoint, adapter_revision, opponent_model, opponent_adapter_checkpoint, opponent_adapter_revision, csv_path, csv_fields, output_folder, logger)

@@ -15,7 +15,7 @@ class BaseActionSampler:
         return self.sample_action(observation)
 
     def sample_action(self, observation: str) -> ActionSample:
-        prompt, raw, extracted, format_feedback, logprobs, prompt_input_ids, completion_input_ids = None, None, None, None, None, None, None
+        prompt, raw, extracted, format_feedback, logprobs, prompt_input_ids, completion_input_ids = observation, None, None, None, None, None, None
         if hasattr(self._agent, "act_full"): raw, extracted, prompt, format_feedback, logprobs, prompt_input_ids, completion_input_ids = self._agent.act_full(observation)
         else: raw = extracted = self._agent(observation)
         return ActionSample(action=extracted, prompt=prompt, prompt_ids=prompt_input_ids, completion=raw, completion_ids=completion_input_ids, format_feedback=format_feedback, sampler_info={'logprobs': logprobs} if logprobs else {})

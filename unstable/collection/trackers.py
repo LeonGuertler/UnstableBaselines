@@ -1,4 +1,4 @@
-import os, re, ray, time, wandb, collections, datetime, logging, numpy as np
+import os, re, ray, time, wandb, collections, datetime, numpy as np
 from typing import Optional, Union, Dict
 from unstable.utils.logger import setup_logger
 
@@ -15,12 +15,13 @@ class BaseTracker:
         self.output_dir = os.path.join("outputs", str(datetime.datetime.now().strftime('%Y-%m-%d')), str(datetime.datetime.now().strftime('%H-%M-%S')), self.run_name)
         os.makedirs(self.output_dir)
         self.output_dirs = {}
-        for folder_name in ["training_data", "checkpoints", "logs", "collection"]: 
+        for folder_name in ["training_data", "checkpoints", "logs", "collection", "eval"]: 
             self.output_dirs[folder_name] =  os.path.join(self.output_dir, folder_name); os.makedirs(self.output_dirs[folder_name], exist_ok=True)
 
     def get_checkpoints_dir(self):  return self.output_dirs["checkpoints"]
     def get_train_dir(self):        return self.output_dirs["training_data"]
     def get_collection_dir(self):   return self.output_dirs["collection"]
+    def get_eval_dir(self):         return self.output_dirs['eval']
     def get_log_dir(self):          return self.output_dirs["logs"]
     def add_trajectory(self, trajectory: PlayerTrajectory, env_id: str): raise NotImplementedError
     def add_eval_episode(self, episode_info: Dict, final_reward: int, player_id: int, env_id: str, iteration: int): raise NotImplementedError
@@ -34,6 +35,7 @@ class Tracker(BaseTracker):
         super().__init__(run_name=run_name)
         self.logger = setup_logger("tracker", self.get_log_dir())
         self.use_wandb = False
+        self.learner_step = 0
         if wandb_project: wandb.init(project=wandb_project, name=run_name, config=wandb_config, id=wandb_id, resume="must" if wandb_id else None); self.use_wandb = True; wandb.define_metric("*", step_metric="learner/step")
         self._m: Dict[str, collections.deque] = collections.defaultdict(lambda: collections.deque(maxlen=512))
         self._buffer: Dict[str, Scalar] = {}
@@ -43,6 +45,10 @@ class Tracker(BaseTracker):
 
     def _put(self, k: str, v: Scalar): self._m[k].append(v)
     def _agg(self, p: str) -> dict[str, Scalar]: return {k: float(np.mean(dq)) for k, dq in self._m.items() if k.startswith(p)}
+    def _num(self, k: str) -> int: return len(self._m[k]) if k in self._m else 0
+    def _clear(self, p: str) -> None:
+        for k in list(self._m.keys()):
+            if k.startswith(p): del self._m[k]
     def _flush_if_due(self):
         if time.monotonic()-self._last_flush >= self.FLUSH_EVERY:
             if self._buffer and self.use_wandb:
@@ -69,7 +75,7 @@ class Tracker(BaseTracker):
         except Exception as exc:
             self.logger.info(f"Exception when adding trajectory to tracker: {exc}")
 
-    def add_eval_game_information(self, game_information: GameInformation, env_id: str):
+    def add_eval_game_information(self, game_information: GameInformation, env_id: str, aggregate: int = None):
         try:
             eval_reward = game_information.final_rewards.get(game_information.eval_model_pid, 0.0)
             _prefix = f"evaluation-{env_id}" if not game_information.eval_opponent_name else f"evaluation-{env_id} ({game_information.eval_opponent_name})"
@@ -78,10 +84,22 @@ class Tracker(BaseTracker):
             self._put(f"{_prefix}/Win Rate",  int(eval_reward>0))
             self._put(f"{_prefix}/Loss Rate", int(eval_reward<0))
             self._put(f"{_prefix}/Draw Rate", int(eval_reward==0))
-            for k, v in game_information.action_info.items(): self._put(f"{_prefix}/{k}", np.mean(v))
+            # If the game ends due to any player taking a invalid move
+            invalid_move = any(info.get("invalid_move") for pid, info in game_information.game_info.items())
+            self._put(f"{_prefix}/Invalid Move Loss Rate", int(invalid_move))
+            for pid, info in game_information.game_info.items():
+                if pid == game_information.eval_model_pid: self._put(f"{_prefix}/Invalid Move Loss Rate (eval model)", int(info.get("invalid_move")))
+            if not invalid_move:
+                self._put(f"{_prefix}/Win Rate (w.o. Invalid)", int(eval_reward>0))
+                self._put(f"{_prefix}/Loss Rate (w.o. Invalid)", int(eval_reward<0))
+                self._put(f"{_prefix}/Draw Rate (w.o. Invalid)", int(eval_reward==0))
+            self._put(f"{_prefix}/Game Length", game_information.num_turns)
             self._n[_prefix] = self._n.get(_prefix, 0) + 1
-            self._put(f"{_prefix}/step", self._n[_prefix])
-            self._buffer.update(self._agg('evaluation-')); self._flush_if_due()
+            self._put(f"{_prefix}/Iteration", game_information.eval_iteration)
+            if aggregate is None or self._num(f'{_prefix}/Iteration') >= aggregate:
+                self._buffer.update(self._agg('evaluation-'))
+                self._flush_if_due()
+                if aggregate is not None: self._clear('evaluation-')
 
             # try storing the eval info to file
             write_game_information_to_file(game_info=game_information, filename=os.path.join(self.get_eval_dir(), f"{env_id}-{game_information.game_idx}.csv"))
@@ -99,14 +117,16 @@ class Tracker(BaseTracker):
     
     def log_learner(self, info: dict):
         try:
+            self.learner_step = info["step"]
             self._m.update({f"learner/{k}": v for k, v in info.items()})
             self._buffer.update(self._agg("learner")); self._flush_if_due()
         except Exception as exc:
             self.logger.info(f"Exception in log_learner: {exc}")
 
-    def get_interface_info(self): 
+    def get_learner_step(self): return self.learner_step
+
+    def get_interface_info(self):
         print("Computing interface stats...")
-        print(self._m)
         for inf_key in ["Game Length", "Format Success Rate - correct_answer_format", "Format Success Rate - invalid_move"]: 
             self._interface_stats[inf_key] = np.mean([float(np.mean(dq)) for k,dq in self._m.items() if inf_key in k])
             print(self._interface_stats[inf_key])

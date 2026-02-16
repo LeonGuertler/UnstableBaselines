@@ -19,7 +19,6 @@ class VLLMActor:
         self.logger = setup_logger(f"actor-{name}", ray.get(tracker.get_log_dir.remote())) # set up logging
         self.gpu_ids = ray.get_gpu_ids()
         os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, self.gpu_ids))
-        
         engine_args = EngineArgs(
             model=cfg["model_name"], enable_lora=True, max_loras=cfg["max_loras"], max_lora_rank=cfg["lora_config"]["lora_rank"], 
             max_cpu_loras=cfg["max_loras"], max_num_seqs=cfg["max_parallel_seq"], max_model_len=cfg["max_model_len"],
@@ -29,18 +28,14 @@ class VLLMActor:
         except Exception as e: self.logger.error(f"VLLM engine initialization failed: {e}"); raise
         self.logger.info(f"vLLM model path or name: {engine_args.model}")
         self.logger.info(f"Model architecture: {self.engine.model_config.__dict__}")
-            
         self.sampling_params = SamplingParams(temperature=cfg.get("temperature", 0.7), top_p=cfg.get("top_p", 0.95), top_k=cfg.get("top_k", 50), max_tokens=cfg.get("max_tokens", 4096), logprobs=1, prompt_logprobs=True)
-
         self._queue = deque()
         self._futures = {}
         self._next_id = 0
         self._req2lora = {}
         self._prev_tok_cnt = defaultdict(int)
-
         self.tracker = tracker
         self.name = name
-
         self._queued = 0
         self._running = 0
         self._tok_hist = deque()
@@ -51,11 +46,22 @@ class VLLMActor:
         self._next_lora_id = 1
         self._last_step_time = time.monotonic()  # Add health check flag
 
-    async def submit_prompt(self, prompt: str, lora_path: Optional[str] = None) -> str:
+    async def submit_prompt(self, prompt: str, lora_path: Optional[str] = None,
+                           temperature: Optional[float] = None, top_p: Optional[float] = None,
+                           top_k: Optional[int] = None, max_tokens: Optional[int] = None) -> str:
         if lora_path is not None and not isinstance(lora_path, str): lora_path = str(lora_path)
+        if any(p is not None for p in [temperature, top_p, top_k, max_tokens]):
+            sampling_params = SamplingParams(
+                temperature=temperature if temperature is not None else self.sampling_params.temperature,
+                top_p=top_p if top_p is not None else self.sampling_params.top_p,
+                top_k=top_k if top_k is not None else self.sampling_params.top_k,
+                max_tokens=max_tokens if max_tokens is not None else self.sampling_params.max_tokens,
+                logprobs=1, prompt_logprobs=True
+            )
+        else: sampling_params = None
         fut = asyncio.Future()
         self._queued += 1
-        self._queue.append((prompt, lora_path, fut))
+        self._queue.append((prompt, lora_path, sampling_params, fut))
         return await fut
 
     async def _batch_loop(self):
@@ -66,14 +72,13 @@ class VLLMActor:
                 if time.monotonic() - self._last_step_time > 30: 
                     self.logger.error(f"Potential deadlock detected - no engine steps for {time.monotonic() - self._last_step_time:.1f} seconds\nRunning requests: {dict(self._running)}\nQueue size: {len(self._queue)}") # 30 second deadlock detection
                 while self._queue:
-                    prompt, path, fut = self._queue.popleft()
+                    prompt, path, sampling_params, fut = self._queue.popleft()
                     lora = path or "base"
                     req_id = str(self._next_id); self._next_id += 1
                     self._futures[req_id] = fut
                     self._req2lora[req_id] = lora
                     self._queued -= 1
                     self._running += 1
-
                     if path:
                         if path not in self._lora_ids:
                             if os.path.exists(path): resolved = path
@@ -90,7 +95,8 @@ class VLLMActor:
                         resolved_path = self._lora_resolved[path]
                         lora_req = LoRARequest(path, self._lora_ids[path], resolved_path)
                     else: lora_req = None
-                    try: self.engine.add_request(req_id, prompt, self.sampling_params, lora_request=lora_req)
+                    params = sampling_params if sampling_params is not None else self.sampling_params
+                    try: self.engine.add_request(req_id, prompt, params, lora_request=lora_req)
                     except Exception as e:
                         self.logger.error(f"Failed to add request {req_id}: {e}")
                         self._running -= 1
@@ -109,7 +115,6 @@ class VLLMActor:
                 except Exception as exc:   
                     self.logger.exception(f"engine.step() failed - running: {dict(self._running)}"); await asyncio.sleep(1.0)  # Brief pause before retry
                     continue
-
                 for out in outs:
                     req_id = out.request_id
                     lora = self._req2lora.get(req_id, "base")
@@ -118,7 +123,6 @@ class VLLMActor:
                     prev = self._prev_tok_cnt[req_id]
                     new_tok = max(0, len(tok_ids) - prev)
                     self._prev_tok_cnt[req_id] = len(tok_ids)
-
                     now = time.monotonic()
                     for _ in range(new_tok): 
                         self._tok_hist.append(now)
@@ -153,15 +157,21 @@ class VLLMActor:
 
 
 class CallableActorWrapper:
-    def __init__(self, actor: VLLMActor, lora_path: str|Path, obs_fmt_fn: Callable[[str],str], extract_fn: Callable[[str], Tuple[str, Dict[str, Any]]]) -> None:
+    def __init__(self, actor: VLLMActor, lora_path: str|Path, obs_fmt_fn: Callable[[str],str], extract_fn: Callable[[str], Tuple[str, Dict[str, Any]]],
+                 temperature: Optional[float] = None, top_p: Optional[float] = None,
+                 top_k: Optional[int] = None, max_tokens: Optional[int] = None) -> None:
         self._actor, self._lora, self._fmt, self._extract = actor, lora_path, obs_fmt_fn, extract_fn
+        self._temperature, self._top_p, self._top_k, self._max_tokens = temperature, top_p, top_k, max_tokens
 
-    def __call__(self, observation: str) -> str: 
+    def __call__(self, observation: str) -> str:
         _, extracted, _, _, _ = self.act_full(observation)
         return extracted
 
     def act_full(self, observation: str) -> Tuple[str, str, str, dict]:
         prompt = self._fmt(observation=observation)
-        raw, logprobs, prompt_input_ids, completion_input_ids = ray.get(self._actor.submit_prompt.remote(prompt=prompt, lora_path=self._lora))
+        raw, logprobs, prompt_input_ids, completion_input_ids = ray.get(self._actor.submit_prompt.remote(
+            prompt=prompt, lora_path=self._lora,
+            temperature=self._temperature, top_p=self._top_p, top_k=self._top_k, max_tokens=self._max_tokens
+        ))
         extracted, format_feedback = self._extract(raw_action=raw)
         return raw, extracted, prompt, format_feedback, logprobs, prompt_input_ids, completion_input_ids

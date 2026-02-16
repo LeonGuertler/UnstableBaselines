@@ -1,7 +1,7 @@
 
 import os, ray, tree, random, tree
 from threading import Lock
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from unstable.utils.logger import setup_logger
 from unstable.utils._types import PlayerTrajectory, Step
@@ -24,12 +24,14 @@ class StepBuffer(BaseBuffer):
         final_reward_transformation: Optional[ComposeFinalRewardTransforms], 
         step_reward_transformation: Optional[ComposeStepRewardTransforms], 
         sampling_reward_transformation: Optional[ComposeSamplingRewardTransforms], 
-        buffer_strategy: str = "random"
+        buffer_strategy: str = "random",
+        remove_invalid_move_trajectory=True
     ):
         self.max_buffer_size, self.buffer_strategy = max_buffer_size, buffer_strategy
         self.final_reward_transformation = final_reward_transformation
         self.step_reward_transformation = step_reward_transformation
         self.sampling_reward_transformation = sampling_reward_transformation
+        self.remove_invalid_move_trajectory = remove_invalid_move_trajectory
         self.collect = True
         self.steps: List[Step] = []
         self.training_steps = 0
@@ -40,11 +42,13 @@ class StepBuffer(BaseBuffer):
 
     def add_player_trajectory(self, player_traj: PlayerTrajectory, env_id: str):
         reward = self.final_reward_transformation(reward=player_traj.final_reward, pid=player_traj.pid, env_id=env_id) if self.final_reward_transformation else player_traj.final_reward
-        for idx in range(len(player_traj.obs)):
+        # Optionally, if episode ended due to invalid move, only keep the last step
+        indices = [len(player_traj.obs) - 1] if self.remove_invalid_move_trajectory and player_traj.game_info.get("invalid_move") and len(player_traj.obs) > 0 else list(range(len(player_traj.obs)))
+        for idx in indices:
             step_reward = self.step_reward_transformation(player_traj=player_traj, step_index=idx, reward=reward) if self.step_reward_transformation else reward
-            with self.mutex: 
+            with self.mutex:
                 self.steps.append(Step(pid=player_traj.pid, obs=player_traj.obs[idx], prompt=player_traj.prompts[idx], prompt_ids=player_traj.prompt_ids[idx], completion=player_traj.completions[idx], completion_ids=player_traj.completion_ids[idx], completion_logprobs=player_traj.completion_logprobs[idx], reward=step_reward, env_id=env_id, step_info={"raw_reward": player_traj.final_reward, "env_reward": reward, "step_reward": step_reward}))
-        self.logger.info(f"Buffer size: {len(self.steps)}, added {len(player_traj.obs)} steps")
+        self.logger.info(f"Buffer size: {len(self.steps)}, added {len(indices)} steps")
         # downsample if necessary
         excess_num_samples = max(0, len(self.steps) - self.max_buffer_size); self.logger.info(f"Excess Num Samples: {excess_num_samples}")
         if excess_num_samples > 0:
@@ -77,16 +81,18 @@ class StepBuffer(BaseBuffer):
 @ray.remote
 class EpisodeBuffer(BaseBuffer):
     def __init__(
-        self, max_buffer_size: int, tracker: BaseTracker, 
-        final_reward_transformation: Optional[ComposeFinalRewardTransforms], 
-        step_reward_transformation: Optional[ComposeStepRewardTransforms], 
-        sampling_reward_transformation: Optional[ComposeSamplingRewardTransforms], 
-        buffer_strategy: str = "random"
+        self, max_buffer_size: int, tracker: BaseTracker,
+        final_reward_transformation: Optional[ComposeFinalRewardTransforms],
+        step_reward_transformation: Optional[ComposeStepRewardTransforms],
+        sampling_reward_transformation: Optional[ComposeSamplingRewardTransforms],
+        buffer_strategy: str = "random",
+        flatten: bool = False
     ):
         self.max_buffer_size, self.buffer_strategy = max_buffer_size, buffer_strategy
         self.final_reward_transformation = final_reward_transformation
         self.step_reward_transformation = step_reward_transformation
         self.sampling_reward_transformation = sampling_reward_transformation
+        self.flatten = flatten
         self.collect = True
         self.training_steps = 0
         self.tracker = tracker
@@ -97,10 +103,11 @@ class EpisodeBuffer(BaseBuffer):
 
     def add_player_trajectory(self, player_traj: PlayerTrajectory, env_id: str):
         episode = []
-        reward = self.final_reward_transformation(reward=player_traj.final_reward, pid=player_traj.pid, env_id=env_id) if self.final_reward_transformation else player_traj.final_reward
-        for idx in range(len(player_traj.obs)):
-            step_reward = self.step_reward_transformation(player_traj=player_traj, step_index=idx, reward=reward) if self.step_reward_transformation else reward
-            episode.append(Step(pid=player_traj.pid, obs=player_traj.obs[idx], completion=player_traj.completions[idx], completion_logprobs=player_traj.completion_logprobs[idx], reward=step_reward, env_id=env_id, step_info={"raw_reward": player_traj.final_reward, "env_reward": reward, "step_reward": step_reward}))
+        final_reward = self.final_reward_transformation(reward=player_traj.final_reward, pid=player_traj.pid, env_id=env_id) if self.final_reward_transformation else player_traj.final_reward
+        for idx in list(range(len(player_traj.obs))):
+            step_reward = final_reward if idx == len(player_traj.obs) - 1 else 0.0
+            step_reward = self.step_reward_transformation(player_traj=player_traj, step_index=idx, reward=step_reward) if self.step_reward_transformation else step_reward
+            episode.append(Step(pid=player_traj.pid, obs=player_traj.obs[idx], prompt=player_traj.prompts[idx], prompt_ids=player_traj.prompt_ids[idx], completion=player_traj.completions[idx], completion_ids=player_traj.completion_ids[idx], completion_logprobs=player_traj.completion_logprobs[idx], reward=step_reward, env_id=env_id, step_info={"raw_reward": player_traj.final_reward, "env_reward": final_reward, "step_reward": step_reward}))
         if len(episode) > 0:
             with self.mutex:
                 self.episodes.append(episode)
@@ -111,7 +118,7 @@ class EpisodeBuffer(BaseBuffer):
                     for b in randm_sampled: self.episodes.remove(b)
                     excess_num_samples = max(0, len(tree.flatten(self.episodes)) - self.max_buffer_size)
         
-    def get_batch(self, batch_size: int) -> List[List[Step]]:
+    def get_batch(self, batch_size: int) -> Union[List[List[Step]], List[Step]]:
         with self.mutex:
             assert len(tree.flatten(self.episodes)) >= batch_size
             step_count = 0
@@ -122,14 +129,12 @@ class EpisodeBuffer(BaseBuffer):
                 step_count += len(ep)
                 if step_count >= batch_size: break
             for ep in sampled_episodes: self.episodes.remove(ep)
-        # sampled_steps = tree.flatten(sampled_episodes)
-        # sampled_episodes = tree.unflatten_as(sampled_episodes, self.sampling_reward_transformation(sampled_steps) if self.sampling_reward_transformation is not None else sampled_steps)
         sampled_episodes = self.sampling_reward_transformation(sampled_episodes) if self.sampling_reward_transformation is not None else sampled_episodes
         try: write_training_data_to_file(batch=tree.flatten(sampled_episodes), filename=os.path.join(self.local_storage_dir, f"train_data_step_{self.training_steps}.csv"))
         except Exception as exc: self.logger.error(f"Exception when trying to write training data to file: {exc}")
         self.logger.info(f"Sampling {len(sampled_episodes)} episodes from buffer.")
         self.training_steps += 1
-        return sampled_episodes
+        return tree.flatten(sampled_episodes) if self.flatten else sampled_episodes
 
     def stop(self):                 self.collect = False
     def size(self) -> int:          return len(tree.flatten(self.episodes))
