@@ -9,6 +9,7 @@ class BaseEnvSampler:
         self._train, self._eval = train_env_specs, eval_env_specs
         self._rng = random.Random(rng_seed)
     def env_list(self) -> str: return ",".join([tes.env_id for tes in self._train])
+    def get_eval_specs(self) -> List[EvalEnvSpec]: return self._eval or []
     def sample(self, kind: str = "train") -> TrainEnvSpec | EvalEnvSpec: ...
     def update(self, avg_actor_reward: float, avg_opponent_reward: float|None) -> None: ...
 

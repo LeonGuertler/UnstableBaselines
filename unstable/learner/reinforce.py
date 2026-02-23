@@ -14,7 +14,6 @@ class REINFORCELearner(BaseLearner):
  
     def _micro_batch_update_step(self, steps):
         _, _, input_ids, advs, vllm_logprobs, lengths, attention_mask, response_mask, pct_truncated, _ = self._prepare_batch(steps=steps)
-
         # Compute reference log probs with base model
         with torch.no_grad():
             self.model.disable_adapter_layers()
@@ -22,24 +21,22 @@ class REINFORCELearner(BaseLearner):
             ref_logp = torch.nn.functional.log_softmax(ref_out.logits, dim=-1)
             ref_tok_logp = ref_logp[:, :-1, :].gather(-1, input_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
             self.model.enable_adapter_layers()
-
         # Compute policy log probs with LoRA adapter
         out = self.engine(input_ids=input_ids, attention_mask=attention_mask)
-        logp = torch.nn.functional.log_softmax(out.logits, dim=-1)[:, :-1, :]
+        logits = out.logits[:, :-1, :]
+        logp = torch.nn.functional.log_softmax(logits, dim=-1)
         tok_logp = logp.gather(-1, input_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
         seq_logp = (tok_logp * response_mask).sum(1) / self.max_generation_len
-
-        # Entropy
-        entropy_per_token = torch.logsumexp(logp, dim=-1) - (torch.softmax(logp, dim=-1) * logp).sum(dim=-1)
+        # Entropy (computed from raw logits, matching TRL's entropy_from_logits)
+        probs = torch.softmax(logits, dim=-1)
+        entropy_per_token = torch.logsumexp(logits, dim=-1) - (probs * logits).sum(dim=-1)
         entropy_seq = self._masked_mean(entropy_per_token, response_mask, axis=1)
-
         # KL divergence against base model
         kl_seq = self._masked_mean(torch.exp(tok_logp - ref_tok_logp) - (tok_logp - ref_tok_logp) - 1, response_mask, axis=1)
-
         # Importance ratio for off-policy correction
         vllm_seq_logp = (vllm_logprobs * response_mask).sum(1) / self.max_generation_len
         ratio = torch.exp(seq_logp - vllm_seq_logp)
-
+        # Policy loss
         policy_loss = -(advs * ratio).mean()
         kl_loss = self.kl_coef * kl_seq.mean()
         loss = policy_loss + kl_loss

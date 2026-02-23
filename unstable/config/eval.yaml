@@ -1,12 +1,12 @@
-run: "UB-eval"
-project: "Benchmarking-Eval"
-model_name: &model_name "Qwen/Qwen3-4B-Base"
+run: "default"
+project: "Unstable-Baselines-Eval"
+model_name: &model_name "Qwen/Qwen3-1.7B-Base"
 num_eval_workers: 128
 num_actors: 4
 output_dir: "outputs/game_eval/results"
 
 environments:
-  - env_id: "ConnectFour-v0-train"
+  - env_id: "SimpleTak-v0-train"
     num_players: 2
     prompt_template: "qwen3-zs"
     fixed_opponent: "google/gemini-2.0-flash-lite-001"

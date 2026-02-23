@@ -57,7 +57,7 @@ def run_game(game_spec: GameSpec, actor: Union["VLLMActor", dict[int, "VLLMActor
 
 @ray.remote
 class GameScheduler:
-    def __init__(self, vllm_config, tracker, buffer, model_sampler, env_sampler, action_sampler: str = "default", eval_every: Optional[int] = None, eval_runs: int = 64):
+    def __init__(self, vllm_config, tracker, buffer, model_sampler, env_sampler, action_sampler: str = "default", eval_every: Optional[int] = None, eval_runs: int = 64, max_concurrent_workers: Optional[int] = None):
         self.logger = setup_logger("game_scheduler", ray.get(tracker.get_log_dir.remote()))
         self.tracker, self.buffer = tracker, buffer
         self.model_sampler = model_sampler
@@ -71,7 +71,9 @@ class GameScheduler:
         self._running_jobs = {}
         self.eval_every = eval_every
         self.eval_runs = eval_runs
-        self._eval_iteration = 0
+        self.max_concurrent_workers = max_concurrent_workers
+        self._eval_iteration = -1
+        self._pending_eval_specs: Optional[List] = None  # persisted across _launch_jobs calls
 
         # thead keeping
         self.flight: Dict[ray.ObjectRef, TaskMeta] = {}
@@ -87,36 +89,30 @@ class GameScheduler:
             done_ref, _ = ray.wait(list(self.flight), num_returns=1)
             self._handle_finished_job(done_ref[0])
         
+    def _total_running(self): return len(self.flight)
+    def _under_total_cap(self): return self.max_concurrent_workers is None or self._total_running() < self.max_concurrent_workers
+
     def _launch_jobs(self, max_train: int, max_eval: Optional[int]):
-        # Train
-        while self._num_running("train") < max_train:
-            game_spec: Optional[GameSpec] = None
+        # Eval first (priority)
+        if max_eval is not None and max_eval > 0:
+            while self._num_running("eval") < max_eval and self._under_total_cap():
+                try:
+                    game_spec = self._next_eval_job()
+                    if game_spec is None:
+                        break  # not triggered yet
+                    self.logger.info(f"received eval game_spec: {game_spec}")
+                    ref = run_game.remote(game_spec, next(self._actor_iter))
+                    self.flight[ref] = TaskMeta("eval", game_spec.env_id)
+                except Exception as exc: self.logger.info(f"Exception scheduling eval game: {exc}")
+        # Train fills remaining capacity
+        while self._num_running("train") < max_train and self._under_total_cap():
             try:
                 game_spec = self._next_train_job()
                 self.logger.info(f"received train game_spec: {game_spec}")
-                actor: VLLMActor = next(self._actor_iter)
-                ref = run_game.remote(game_spec, actor)
+                ref = run_game.remote(game_spec, next(self._actor_iter))
                 self.flight[ref] = TaskMeta("train", game_spec.env_id)
             except Exception as exc:
                 self.logger.info(f"Exception scheduling train game: {exc}")
-
-        # Eval
-        if max_eval is None or max_eval == 0: return
-        game_specs = None
-        if self.eval_every is not None:
-            learner_step = ray.get(self.tracker.get_learner_step.remote())
-            if learner_step % self.eval_every == 0 and (learner_step != self._eval_iteration or self._eval_iteration == 0):
-                self._eval_iteration = learner_step
-                game_specs = [self._next_eval_job() for _ in range(self.eval_runs)]
-                self.logger.info(f"Triggering eval iteration {self._eval_iteration} at learner step {learner_step}")
-        while (game_specs is None or len(game_specs) > 0) and self._num_running("eval") < max_eval:
-            try:
-                game_spec = game_specs.pop() if game_specs else self._next_eval_job()
-                self.logger.info(f"received eval game_spec: {game_spec}")
-                actor: VLLMActor = next(self._actor_iter) # get actor
-                ref = run_game.remote(game_spec, actor)
-                self.flight[ref] = TaskMeta("eval", game_spec.env_id)
-            except Exception as exc: self.logger.info(f"Exception scheduling eval game: {exc}")
 
     def _handle_finished_job(self, ref):
         meta = self.flight.pop(ref)
@@ -126,14 +122,13 @@ class GameScheduler:
 
     def _next_train_job(self):
         try:
-            env_spec = self.env_sampler.sample(kind="train") # sample the env spec
+            env_spec = self.env_sampler.sample(kind="train")
             current_ckpt_uid, current_ckpt_lora_path = ray.get(self.model_sampler.get_current_ckpt.remote()) # sample the current checkpoint
-            # build the game spec and agent specs
             pids = list(range(env_spec.num_players))
             random.shuffle(pids); agent_specs = []
             self._running_jobs[self._game_idx] = {"env_id": env_spec.env_id, "models": []}
             for i, pid in enumerate(pids):
-                if i < env_spec.num_actors: # add current ckpt
+                if i < env_spec.num_actors:
                     self._running_jobs[self._game_idx]["models"].append({"uid": current_ckpt_uid, "pid": pid, "type": "model"})
                     agent_specs.append(AgentSpec(pid=pid, kind="checkpoint", collect_data=True, lora_path=current_ckpt_lora_path, prompt_template=env_spec.prompt_template, action_extraction_fn=env_spec.action_extraction_fn))
                 else:
@@ -158,24 +153,51 @@ class GameScheduler:
                 checkpoint_name = os.path.basename(os.path.normpath(game_information.names[traj.pid])) if game_information.names[traj.pid] else 'None'
                 write_game_information_to_file(game_information, f"{self.local_storage_dir}/{checkpoint_name}.csv")
         job_info = self._running_jobs.pop(game_information.game_idx, None)
-        if job_info is None: return # shouldn’t happen
+        if job_info is None: return
         actor_rs = [game_information.final_rewards[m["pid"]] for m in job_info["models"] if m["type"] == "model" if m["pid"] in game_information.final_rewards]
         opp_rs = [game_information.final_rewards[m["pid"]] for m in job_info["models"] if m["type"] == "opponent" if m["pid"] in game_information.final_rewards]
         self.env_sampler.update(avg_actor_reward=(sum(actor_rs) / len(actor_rs) if actor_rs else None), avg_opponent_reward=(sum(opp_rs) / len(opp_rs) if opp_rs else None))
         self.model_sampler.update.remote(game_info=game_information, job_info=job_info)
 
-    def _next_eval_job(self):
-        try:
-            env_spec = self.env_sampler.sample(kind="eval")
-            current_ckpt_uid, current_ckpt_lora_path = ray.get(self.model_sampler.get_current_ckpt.remote())
+    def _next_eval_job(self, env_spec =None, opp_info=None):
+        def _build_eval_spec(env_spec, opp_info=None):
+            _, current_ckpt_lora_path = ray.get(self.model_sampler.get_current_ckpt.remote())
             pids = list(range(env_spec.num_players))
             random.shuffle(pids); agent_specs = []
+            if env_spec.kind == "checkpoint":
+                opp_uid, _, _, opp_path, opp_sampling = opp_info if opp_info is not None else ray.get(self.model_sampler.sample_eval_checkpoint.remote())
+                eval_opponent_name = opp_uid
+            else: eval_opponent_name = env_spec.fixed_opponent
             for i, pid in enumerate(pids):
-                if i == 0:  agent_specs.append(AgentSpec(pid=pid, kind="checkpoint", collect_data=True, lora_path=current_ckpt_lora_path, prompt_template=env_spec.prompt_template, action_extraction_fn=env_spec.action_extraction_fn, sampler=self.action_sampler)) # only one actor, rest fixed
-                else:       agent_specs.append(AgentSpec(pid=pid, kind="openrouter", lora_path=None, openrouter_name=env_spec.fixed_opponent, sampler=self.action_sampler))
-            game_spec = GameSpec(game_idx=self._game_idx, env_id=env_spec.env_id, seed=self._game_idx, agent_specs=agent_specs, eval_model_pid=pids[0], eval_opponent_name=env_spec.fixed_opponent, eval_iteration=self._eval_iteration) # populate GameSpec
+                if i == 0: agent_specs.append(AgentSpec(pid=pid, kind="checkpoint", collect_data=True, lora_path=current_ckpt_lora_path, prompt_template=env_spec.prompt_template, action_extraction_fn=env_spec.action_extraction_fn, sampler=self.action_sampler))
+                else:
+                    if env_spec.kind == "checkpoint":
+                        agent_specs.append(AgentSpec(pid=pid, kind="checkpoint", collect_data=False, lora_path=opp_path, prompt_template=env_spec.prompt_template, action_extraction_fn=env_spec.action_extraction_fn,
+                                                    temperature=opp_sampling.get("temperature"), top_p=opp_sampling.get("top_p"), top_k=opp_sampling.get("top_k"), max_tokens=opp_sampling.get("max_tokens")))
+                    else: agent_specs.append(AgentSpec(pid=pid, kind="openrouter", lora_path=None, openrouter_name=env_spec.fixed_opponent, sampler=self.action_sampler))
+            game_spec = GameSpec(game_idx=self._game_idx, env_id=env_spec.env_id, seed=self._game_idx, agent_specs=agent_specs, eval_model_pid=pids[0], eval_opponent_name=eval_opponent_name, eval_iteration=self._eval_iteration)
             self._game_idx += 1
             return game_spec
+
+        try:
+            if self.eval_every is not None:
+                # Evaluate only at fixed steps
+                learner_step = ray.get(self.tracker.get_learner_step.remote())
+                next_eval = (self._eval_iteration // self.eval_every + 1) * self.eval_every
+                if learner_step >= next_eval:
+                    self._eval_iteration = next_eval
+                    eval_checkpoints = ray.get(self.model_sampler.get_eval_checkpoints.remote())
+                    self._pending_eval_specs = []
+                    for spec in self.env_sampler.get_eval_specs():
+                        if spec.kind == "checkpoint":
+                            for ckpt in eval_checkpoints: self._pending_eval_specs += [_build_eval_spec(env_spec=spec, opp_info=ckpt) for _ in range(self.eval_runs)]
+                        else: self._pending_eval_specs += [_build_eval_spec(env_spec=spec) for _ in range(self.eval_runs)]
+                    self.logger.info(f"Triggering eval iteration {self._eval_iteration} at learner step {learner_step} ({len(self._pending_eval_specs)} games)")
+                return self._pending_eval_specs.pop() if self._pending_eval_specs else None
+            else:
+                # Continous evaluation
+                if env_spec is None: env_spec = self.env_sampler.sample(kind="eval")
+                return _build_eval_spec(env_spec=env_spec, opp_info=opp_info)
         except Exception as exc:
             self.logger.info(f"Exception in 'next_eval_job': {exc}")
             import time

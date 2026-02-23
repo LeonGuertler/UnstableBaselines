@@ -1,3 +1,4 @@
+import os
 import ray
 import random
 import torch
@@ -9,6 +10,7 @@ from transformers import get_scheduler
 from unstable.collection.reward_transformations import NormalizeRewards
 from unstable.learner.models import build_peft_model, enable_full_activation_ckpt
 from unstable.learner.base import BaseLearner
+from unstable.utils.misc import write_training_data_to_file
 
 
 @ray.remote
@@ -50,42 +52,41 @@ class PPOLearner(BaseLearner):
 
     def _micro_batch_update_step(self, steps):
         prompt_ids, prompt_attention_mask, input_ids, advs, vllm_logprobs, lengths, attention_mask, response_mask, pct_truncated, returns = self._prepare_batch(steps=steps)
-        
         # Compute reference log probs with base model
         with torch.no_grad():
+            self.model.disable_adapter_layers()
             ref_out = self.engine(input_ids=input_ids, attention_mask=attention_mask)
             ref_logp = F.log_softmax(ref_out.logits, dim=-1)
             ref_tok_logp = ref_logp[:, :-1, :].gather(-1, input_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
-
+            self.model.enable_adapter_layers()
         # Compute policy logps and values
         out = self.engine(input_ids=input_ids, attention_mask=attention_mask)
-        logp = F.log_softmax(out.logits, dim=-1)[:, :-1, :]
+        logits = out.logits[:, :-1, :]
+        logp = F.log_softmax(logits, dim=-1)
         tok_logp = logp.gather(-1, input_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
         seq_logp = (tok_logp * response_mask).sum(1) / self.max_generation_len
-
-        # Entropy
-        entropy_per_token = -(torch.softmax(logp, dim=-1) * logp).sum(dim=-1)
+        # Entropy (computed from raw logits, matching TRL's entropy_from_logits)
+        probs = torch.softmax(logits, dim=-1)
+        entropy_per_token = torch.logsumexp(logits, dim=-1) - (probs * logits).sum(dim=-1)
         entropy_seq = self._masked_mean(entropy_per_token, response_mask, axis=1)
-
         # KL divergence against base model
         kl_seq = self._masked_mean(torch.exp(tok_logp - ref_tok_logp) - (tok_logp - ref_tok_logp) - 1, response_mask, axis=1)
-
         # Importance ratio
         vllm_seq_logp = (vllm_logprobs * response_mask).sum(1) / self.max_generation_len
         ratio = torch.exp(seq_logp - vllm_seq_logp)
-
         clipped_ratio = torch.clamp(ratio, 1 - self.lower_clip_ratio, 1 + self.upper_clip_ratio)
+        # Policy loss
         policy_loss = -torch.min(advs * ratio, advs * clipped_ratio).mean()
         kl_loss = self.beta * kl_seq.mean()
         entropy_loss = -self.entropy_coeff * entropy_seq.mean()
         loss = policy_loss
         self.engine.backward(loss + kl_loss + entropy_loss)
-
         # Value MSE with clipping
         values = self.critic_model.values(prompt_ids, attention_mask=prompt_attention_mask)
         value = values[torch.arange(values.size(0), device=values.device), prompt_attention_mask.sum(dim=1) - 1]
         old_values = torch.tensor([s.step_info["old_value"] for s in steps], dtype=torch.float32, device=self.device)
         value_clipped = old_values + torch.clamp(value - old_values, -self.clip_value, self.clip_value)
+        # Value loss
         value_loss = 0.5 * torch.max((value - returns) ** 2, (value_clipped - returns) ** 2).mean()
         self.critic_engine.backward(self.value_coeff * value_loss)
 
@@ -123,9 +124,13 @@ class PPOLearner(BaseLearner):
         train_batch = []
         for i, ep in enumerate(batch):
             for j, step in enumerate(ep):
-                train_batch.append(replace(step, reward=ep_advs[i][j].item(), step_info={**step.step_info, "return": ep_returns[i][j].item(), "old_value": ep_values[i][j].item()}))
+                train_batch.append(replace(step, reward=ep_advs[i][j].item(), step_info={**step.step_info, "return": ep_returns[i][j].item(), "old_value": ep_values[i][j].item(), "advantage": ep_advs[i][j].item()}))
+        all_advs = torch.cat(ep_advs).float()
         if self.normalize_adv: train_batch = NormalizeRewards(z_score=True)(train_batch)
-        metrics_acc = {'rewards_mean': all_rewards.mean().item(), 'rewards_std': all_rewards.std().item(), 'values_mean': all_values.mean().item(), 'values_std': all_values.std().item()}
+        train_batch = [replace(s, step_info={**s.step_info, "normalized_adv": s.reward}) for s in train_batch]
+        train_dir = ray.get(self.tracker.get_train_dir.remote())
+        write_training_data_to_file(train_batch, os.path.join(train_dir, f"train_data_step_{self._step}.csv"), overwrite=True)
+        metrics_acc = {'rewards_mean': all_rewards.mean().item(), 'rewards_std': all_rewards.std().item(), 'values_mean': all_values.mean().item(), 'values_std': all_values.std().item(), 'advantages_mean': all_advs.mean().item(), 'advantages_std': all_advs.std().item()}
         for epoch in range(self.epochs):
             random.shuffle(train_batch)
             for i in range(self.grad_accumulation_steps):
@@ -138,7 +143,7 @@ class PPOLearner(BaseLearner):
                 self.engine.step()
                 self.critic_engine.step()
         for k in metrics_acc: 
-            if k not in ['rewards_mean', 'rewards_std', 'values_mean', 'values_std', 'grad_norm_actor', 'grad_norm_critic']: metrics_acc[k] /= total_steps
+            if k not in ['rewards_mean', 'rewards_std', 'values_mean', 'values_std', 'advantages_mean', 'advantages_std', 'grad_norm_actor', 'grad_norm_critic']: metrics_acc[k] /= total_steps
         self.logger.info(f"Step metrics: {metrics_acc}")
         metrics_acc['grad_norm'] = (metrics_acc.get('grad_norm_actor', 0.0) + metrics_acc.get('grad_norm_critic', 0.0)) / 2 if 'grad_norm_actor' in metrics_acc and 'grad_norm_critic' in metrics_acc else 0.0
         return metrics_acc
@@ -149,7 +154,6 @@ class PPOLearner(BaseLearner):
         critic_dir.mkdir(parents=True, exist_ok=True)
         self.critic_model.save_pretrained(critic_dir, save_adapter=True)
         vh = getattr(self.critic_model.base_model, "value_head", None)
-        if vh is not None:
-            torch.save(vh.state_dict(), critic_dir / "value_head.pt")
+        if vh is not None: torch.save(vh.state_dict(), critic_dir / "value_head.pt")
         return ckpt_dir
     

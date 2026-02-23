@@ -31,11 +31,11 @@ class BaseModelSampler:
             ranks[idx] = rank
         return ranks
     
-    def add_checkpoint(self, uid: str, path: str, iteration: int, inherit: bool=True):
+    def add_checkpoint(self, uid: str, path: str, iteration: int, inherit: bool=True, eval: bool=False):
         self.logger.info(f"tryin to add ckpt: {uid}, path {path}, iteration {iteration}, inherit: {inherit}")
         if uid in self._db: return
         rating = self.TS.Rating(mu=self._db[self._current_ckpt_uid].rating.mu, sigma=self._db[self._current_ckpt_uid].rating.sigma*2) if (inherit and self._current_ckpt_uid in self._db) else self.TS.create_rating()
-        self._db[uid] = ModelMeta(uid=uid, kind="checkpoint", path_or_name=path, rating=rating, iteration=iteration)
+        self._db[uid] = ModelMeta(uid=uid, kind="checkpoint", path_or_name=path, rating=rating, iteration=iteration, eval=eval)
         self._current_ckpt_uid = uid # make it current
         self.logger.info(f"added ckpt: {uid}, path {path}, iteration {iteration}, inherit: {inherit}")
     
@@ -48,6 +48,11 @@ class BaseModelSampler:
     def get_current_ckpt(self):         
         current_ckpt_lora_path = self.get_name_or_lora_path(uid=self._current_ckpt_uid)
         return self._current_ckpt_uid, current_ckpt_lora_path
+
+    def get_eval_checkpoints(self):
+        candidates = [m for m in self._db.values() if m.kind == "checkpoint" and m.eval and m.uid != self._current_ckpt_uid]
+        if not candidates: candidates = [self._db[self._current_ckpt_uid]]
+        return [(m.uid, m.kind, None, m.path_or_name, self.get_opponent_sampling_params()) for m in candidates]
     
     def update(self, game_info: GameInformation, job_info: Dict[str, Any],  dummy_uid: str="fixed-env"):
         uids = [m["uid"] for m in job_info["models"] if m["pid"] in game_info.final_rewards]
@@ -55,29 +60,31 @@ class BaseModelSampler:
         if len(uids) == 1:
             if dummy_uid not in self._db: self.add_fixed(name=dummy_uid.replace("fixed-", ""), prior_mu=25.0)
             uids = [uids[0], dummy_uid]
-            scores = [scores[0], 0.0] # any baseline score works
+            scores = [scores[0], 0.0]
         rating_groups = [[self._db[uid].rating] for uid in uids]
         ranks = self._scores_to_ranks(scores)
         new_groups = self.TS.rate(rating_groups, ranks=ranks)
-        # flatten, then write back
         for uid, (new_rating,) in zip(uids, new_groups):
             self._db[uid].rating = new_rating
             self._db[uid].games += 1
             if ranks[uids.index(uid)] == 0:               self._db[uid].wins  += 1
             elif ranks.count(ranks[uids.index(uid)]) > 1: self._db[uid].draws += 1
-        # update pair-wise match matrix for analysis/debugging
         for i, uid_i in enumerate(uids):
             for uid_j in uids[i+1:]:
                 self._match_counts[tuple(sorted((uid_i, uid_j)))] += 1
         self._update_step += 1
-        # push to tracker every n update steps
         if not self._update_step%10: self._tracker.log_model_sampler.remote(ts_dict={uid: asdict(meta) for uid, meta in self._db.items()}, match_counts=copy.deepcopy(self._match_counts))
 
     def get_opponent_sampling_params(self) -> dict:
         return {"temperature": self._opp_temperature, "top_p": self._opp_top_p,
                 "top_k": self._opp_top_k, "max_tokens": self._opp_max_tokens}
 
-    def sample_opponent(self): raise NotImplementedError 
+    def sample_eval_checkpoint(self):
+        eval_ckpt = random.choice(self.get_eval_checkpoints())
+        self.logger.info(f"sampling eval checkpoint opponent: {eval_ckpt[0]}")
+        return eval_ckpt
+
+    def sample_opponent(self): raise NotImplementedError
 
 
 @ray.remote

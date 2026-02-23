@@ -2,9 +2,10 @@ import csv, json, os
 from unstable.utils._types import GameInformation
 
 
-def write_training_data_to_file(batch, filename: str):
-    file_exists = os.path.isfile(filename)
-    with open(filename, mode='a', newline='', encoding='utf-8') as csvfile:
+def write_training_data_to_file(batch, filename: str, overwrite: bool = False):
+    mode = 'w' if overwrite else 'a'
+    file_exists = os.path.isfile(filename) and not overwrite
+    with open(filename, mode=mode, newline='', encoding='utf-8') as csvfile:
         writer = csv.writer(csvfile)
         if not file_exists: writer.writerow(['pid', 'prompt', 'completion', 'reward', "env_id", "step_info"])  # header
         for step in batch: writer.writerow([step.pid, step.prompt, step.completion, step.reward, step.env_id, step.step_info])

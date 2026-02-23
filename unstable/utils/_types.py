@@ -101,13 +101,14 @@ class TrainEnvSpec:
     prompt_template: str 
     action_extraction_fn: str = "default"
 
-@dataclass 
+@dataclass
 class EvalEnvSpec:
-    env_id: str 
-    num_players: int 
+    env_id: str
+    num_players: int
     prompt_template: str
     action_extraction_fn: str = "default"
     fixed_opponent: str = "google/gemini-2.0-flash-lite-001"
+    kind: str = "openrouter"               # "openrouter" | "checkpoint"
 
 @dataclass
 class ModelMeta:
@@ -120,3 +121,4 @@ class ModelMeta:
     draws: int = 0
     active: bool = True
     iteration: int|None = None
+    eval: bool = False

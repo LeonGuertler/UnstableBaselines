@@ -27,6 +27,7 @@ class BaseLearner:
         tracker: BaseTracker, 
         model_sampler, 
         epochs: int = 1,
+        eval_steps: int = 100,
         max_generation_len: Optional[int] = None,
         max_train_len: Optional[int] = None,
         use_trainer_cache: bool=False, 
@@ -41,7 +42,7 @@ class BaseLearner:
     ):
         self.model_name = model_name
         self.total_training_steps = total_training_steps; self.epochs = int(epochs)
-        self.lora_cfg = lora_cfg; self.initial_lora_path = initial_lora_path
+        self.lora_cfg = lora_cfg; self.initial_lora_path = initial_lora_path; self.eval_steps = eval_steps
         self.buffer, self.tracker, self.model_sampler = buffer, tracker, model_sampler
         self.logger = setup_logger(f"learner-{rank}", ray.get(tracker.get_log_dir.remote()))
         self.checkpoint_cfg = checkpoint_cfg
@@ -126,12 +127,12 @@ class BaseLearner:
         from deepspeed import comm as dist; from torch.distributed import ReduceOp
         self.logger.info("Starting training loop")
         while self._step < iterations:
-            try: # Wait and collect data
+            try: 
+                # Wait and collect data
                 while (ray.get(self.buffer.size.remote()) < self.local_batch_size * self.world_size): time.sleep(0.2)
                 self.logger.info("Enough data, starting learning step")
                 batch: List = ray.get(self.buffer.get_batch.remote(self.local_batch_size)); self._samples_seen += self.local_batch_size
                 accumulated_metrics = self._update(batch=batch)
-
                 # Metrics
                 t = torch.tensor([float(v) for v in accumulated_metrics.values()], device=self.device, dtype=torch.float32)
                 total_samples = torch.tensor(self._samples_seen, device=self.device, dtype=torch.long)
@@ -141,11 +142,10 @@ class BaseLearner:
                     log = dict(zip(accumulated_metrics.keys(), t.tolist()))
                     log.update({"step": self._step, "grad_norm": accumulated_metrics.get("grad_norm", 0.0), "samples_seen": int(total_samples.item()), "lr": self.optimizer.param_groups[0]["lr"]})
                     self.tracker.log_learner.remote(log)
-                     
                     # Save & register the updated checkpoint
                     ckpt_path = self._save_checkpoint()
                     try:
-                        self.model_sampler.add_checkpoint.remote(uid=f"ckpt-{self._step}", path=ckpt_path, iteration=self._step)
+                        self.model_sampler.add_checkpoint.remote(uid=f"ckpt-{self._step}", path=ckpt_path, iteration=self._step, eval=(self._step > 0 and self._step % self.eval_steps == 0))
                         self.logger.info(f"Registered new ckpt: {ckpt_path}, ckpt-{self._step}")
                     except Exception as exc: self.logger.info(f"Exception when adding checkpoint: {exc}")
                     self.logger.info(f"registered new ckpt -> {ckpt_path} for iteration{self._step}")

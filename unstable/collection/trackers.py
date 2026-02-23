@@ -38,8 +38,9 @@ class Tracker(BaseTracker):
         self.learner_step = 0
         if wandb_project: wandb.init(project=wandb_project, name=run_name, config=wandb_config, id=wandb_id, resume="must" if wandb_id else None); self.use_wandb = True; wandb.define_metric("*", step_metric="learner/step")
         self._m: Dict[str, collections.deque] = collections.defaultdict(lambda: collections.deque(maxlen=512))
-        self._buffer: Dict[str, Scalar] = {}
         self._n = {}
+        self._buffer: Dict[str, Scalar] = {}
+        self._eval_pending: Dict[int, Dict[str, list]] = {}
         self._last_flush = time.monotonic()
         self._interface_stats = {"gpu_tok_s": {}, "TS": {}, "exploration": {}, "match_counts": {}, "format_success": None, "inv_move_rate": None, "game_len": None}
 
@@ -78,32 +79,27 @@ class Tracker(BaseTracker):
     def add_eval_game_information(self, game_information: GameInformation, env_id: str, aggregate: int = None):
         try:
             eval_reward = game_information.final_rewards.get(game_information.eval_model_pid, 0.0)
-            _prefix = f"evaluation-{env_id}" if not game_information.eval_opponent_name else f"evaluation-{env_id} ({game_information.eval_opponent_name})"
-            self._put(f"{_prefix}/Reward", eval_reward)
-            self._put(f"{_prefix}/Reward (pid={game_information.eval_model_pid})", eval_reward)
-            self._put(f"{_prefix}/Win Rate",  int(eval_reward>0))
-            self._put(f"{_prefix}/Loss Rate", int(eval_reward<0))
-            self._put(f"{_prefix}/Draw Rate", int(eval_reward==0))
-            # If the game ends due to any player taking a invalid move
-            invalid_move = any(info.get("invalid_move") for pid, info in game_information.game_info.items())
-            self._put(f"{_prefix}/Invalid Move Loss Rate", int(invalid_move))
+            _prefix = f"evaluation-{env_id}"
+            _lbl = f" ({game_information.eval_opponent_name})" if game_information.eval_opponent_name else ""
+            it = game_information.eval_iteration if aggregate is not None else None
+            if it not in self._eval_pending: self._eval_pending[it] = collections.defaultdict(list)
+            buf = self._eval_pending[it]
+            buf[f"{_prefix}/Reward{_lbl}"].append(eval_reward)
+            buf[f"{_prefix}/Reward (pid={game_information.eval_model_pid}){_lbl}"].append(eval_reward)
+            buf[f"{_prefix}/Win Rate{_lbl}"].append(int(eval_reward>0))
+            buf[f"{_prefix}/Loss Rate{_lbl}"].append(int(eval_reward<0))
+            buf[f"{_prefix}/Draw Rate{_lbl}"].append(int(eval_reward==0))
             for pid, info in game_information.game_info.items():
-                if pid == game_information.eval_model_pid: self._put(f"{_prefix}/Invalid Move Loss Rate (eval model)", int(info.get("invalid_move")))
-            if not invalid_move:
-                self._put(f"{_prefix}/Win Rate (w.o. Invalid)", int(eval_reward>0))
-                self._put(f"{_prefix}/Loss Rate (w.o. Invalid)", int(eval_reward<0))
-                self._put(f"{_prefix}/Draw Rate (w.o. Invalid)", int(eval_reward==0))
-            self._put(f"{_prefix}/Game Length", game_information.num_turns)
-            self._n[_prefix] = self._n.get(_prefix, 0) + 1
-            self._put(f"{_prefix}/Iteration", game_information.eval_iteration)
-            if aggregate is None or self._num(f'{_prefix}/Iteration') >= aggregate:
-                self._buffer.update(self._agg('evaluation-'))
-                self._flush_if_due()
-                if aggregate is not None: self._clear('evaluation-')
-
-            # try storing the eval info to file
+                if pid == game_information.eval_model_pid: buf[f"{_prefix}/Invalid Move Loss Rate{_lbl}"].append(int(info.get("invalid_move")))
+                if info.get("invalid_move") and pid != game_information.eval_model_pid: buf[f"{_prefix}/Invalid Move Win Rate{_lbl}"].append(int(eval_reward>0))
+            buf[f"{_prefix}/Game Length{_lbl}"].append(game_information.num_turns)
+            if aggregate is not None:
+                buf[f"{_prefix}/Iteration"].append(it)
+                if len(buf[f"{_prefix}/Iteration"]) >= aggregate:
+                    self._buffer.update({k: float(np.mean(v)) for k, v in buf.items()}); self._flush_if_due()
+                    del self._eval_pending[it]
+            else: self._buffer.update({k: float(np.mean(v)) for k, v in buf.items()}); self._flush_if_due()
             write_game_information_to_file(game_info=game_information, filename=os.path.join(self.get_eval_dir(), f"{env_id}-{game_information.game_idx}.csv"))
-
         except Exception as exc:
             self.logger.info(f"Exception when adding game_info to tracker: {exc}")
 

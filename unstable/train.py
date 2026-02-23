@@ -44,7 +44,8 @@ def train(config: Optional[Union[Dict, str]] = 'reinforce', interface: bool = Fa
             for env in env_sampler_config.pop('train')
         ],
         eval_env_specs=[
-            EvalEnvSpec(env_id=env['id'], num_players=env['num_players'], prompt_template=env['prompt_template'], fixed_opponent=env["fixed_opponent"])
+            EvalEnvSpec(env_id=env['id'], num_players=env['num_players'], prompt_template=env.get('prompt_template', 'qwen3-zs'), 
+                        fixed_opponent=env.get("fixed_opponent", "google/gemini-2.0-flash-lite-001"), kind=env.get("kind", "openrouter"))
             for env in env_sampler_config.pop('eval')
     ], **env_sampler_config)
     
@@ -54,7 +55,7 @@ def train(config: Optional[Union[Dict, str]] = 'reinforce', interface: bool = Fa
     model_sampler = get_model_sampler_cls(model_sampler_config.pop('type')).options(name="ModelSampler").remote(tracker=tracker, **model_sampler_config) 
     for fixed_opponent in fixed_opponents: ray.get(model_sampler.add_fixed.remote(name=fixed_opponent))
     policy_ckpt = checkpoint_config['policy']
-    ray.get(model_sampler.add_checkpoint.remote(uid=policy_ckpt['uid'], path=policy_ckpt['path'], iteration=checkpoint_config['iteration']))
+    ray.get(model_sampler.add_checkpoint.remote(uid=policy_ckpt['uid'], path=policy_ckpt['path'], iteration=checkpoint_config['iteration'], eval=True))
     
     # Replay Buffer
     replay_buffer_config = config['replay_buffer']; reward_transformations = replay_buffer_config.pop('reward_transformations'); buffer_type = replay_buffer_config.pop('type')
@@ -84,7 +85,8 @@ def train(config: Optional[Union[Dict, str]] = 'reinforce', interface: bool = Fa
     eval_config = config.get('evaluation', {})
     game_scheduler = GameScheduler.options(name="GameScheduler").remote(
         vllm_config=config['vllm_config'], tracker=tracker, buffer=replay_buffer, model_sampler=model_sampler, env_sampler=env_sampler, action_sampler=action_sampler_config.pop('type'),
-        eval_every=config.get('evaluation_every_iterations'), eval_runs=config.get('evaluation_runs_per_env', 64)
+        eval_every=config.get('evaluation_steps'), eval_runs=config.get('evaluation_runs', 64),
+        max_concurrent_workers=config.get('max_concurrent_workers')
     )
     
     # Run
