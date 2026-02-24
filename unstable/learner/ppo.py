@@ -56,12 +56,12 @@ class PPOLearner(BaseLearner):
         with torch.no_grad():
             self.model.disable_adapter_layers()
             ref_out = self.engine(input_ids=input_ids, attention_mask=attention_mask)
-            ref_logp = F.log_softmax(ref_out.logits, dim=-1)
+            ref_logp = F.log_softmax(ref_out.logits / self.temperature, dim=-1)
             ref_tok_logp = ref_logp[:, :-1, :].gather(-1, input_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
             self.model.enable_adapter_layers()
         # Compute policy logps and values
         out = self.engine(input_ids=input_ids, attention_mask=attention_mask)
-        logits = out.logits[:, :-1, :]
+        logits = out.logits[:, :-1, :] / self.temperature
         logp = F.log_softmax(logits, dim=-1)
         tok_logp = logp.gather(-1, input_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
         seq_logp = (tok_logp * response_mask).sum(1) / self.max_generation_len
@@ -79,8 +79,8 @@ class PPOLearner(BaseLearner):
         policy_loss = -torch.min(advs * ratio, advs * clipped_ratio).mean()
         kl_loss = self.beta * kl_seq.mean()
         entropy_loss = -self.entropy_coeff * entropy_seq.mean()
-        loss = policy_loss
-        self.engine.backward(loss + kl_loss + entropy_loss)
+        loss = policy_loss + kl_loss + entropy_loss
+        self.engine.backward(loss)
         # Value MSE with clipping
         values = self.critic_model.values(prompt_ids, attention_mask=prompt_attention_mask)
         value = values[torch.arange(values.size(0), device=values.device), prompt_attention_mask.sum(dim=1) - 1]

@@ -30,7 +30,8 @@ class BaseLearner:
         eval_steps: int = 100,
         max_generation_len: Optional[int] = None,
         max_train_len: Optional[int] = None,
-        use_trainer_cache: bool=False, 
+        temperature: float = 1.0,
+        use_trainer_cache: bool=False,
         initial_lora_path: Optional[str]=None,
         zero_optimization: Optional[Dict[str,Any]]=None,
         gradient_checkpointing: bool = False,
@@ -47,6 +48,7 @@ class BaseLearner:
         self.logger = setup_logger(f"learner-{rank}", ray.get(tracker.get_log_dir.remote()))
         self.checkpoint_cfg = checkpoint_cfg
         self.lora_cfg = lora_cfg
+        self.temperature = temperature
         self.use_trainer_cache = use_trainer_cache
         self.max_generation_len = max_generation_len
         self.max_train_len = max_train_len

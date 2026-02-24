@@ -11,6 +11,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--name", type=str, default="grpo-connect-four", help="The run name.")
     parser.add_argument("--algorithm", type=str, default="grpo", help="The algorithm to train on.") 
+    parser.add_argument("--players", type=int, default=2, help="The number of players in the environment.")
     parser.add_argument("--envs", type=str, default="ConnectFour-v0-train", help=(
         "Comma-separated list of environments to train on. "
         "Example: 'ConnectFour-v0-train,AnotherEnv-v0'"
@@ -28,7 +29,7 @@ if __name__ == "__main__":
     config["env_sampler"]["train"] = [
         {
             "id": env_id,
-            "num_players": 2,
+            "num_players": args.players,
             "num_actors": 1,
             "prompt_template": args.template,
         }
