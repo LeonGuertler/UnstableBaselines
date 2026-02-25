@@ -1,0 +1,92 @@
+run: "default"
+project: "Unstable-Baselines"
+model_name: &model_name "Qwen/Qwen3-1.7B-Base"
+max_concurrent_workers: 16
+collection_workers: 16
+evaluation_workers: 0
+evaluation_runs: 500
+evaluation_steps: 10000
+logging_dir: "outputs"
+training_iterations: &training_iterations 600
+
+checkpoint:
+  policy:
+    uid: "base"
+    path: null
+  iteration: 0
+  wandb_id: null
+
+env_sampler:
+  type: "random"
+  train:
+    - id: "math-12k-v0"
+      num_players: 1
+      num_actors: 1
+      prompt_template: "qwen3-math"
+      action_extraction_fn: "none"
+      group_size: 8
+  eval:
+    - id: "math500-v0"
+      num_players: 1
+      prompt_template: "qwen3-math"
+      fixed_opponent: null
+
+action_sampler:
+  type: "default"
+
+model_sampler:
+  type: "mirror"
+
+learner:
+  num_gpus: 1
+  type: "reinforce"
+  total_training_steps: *training_iterations
+  model_name: *model_name
+  local_batch_size: 32
+  micro_batch_size: 1
+  learning_rate: 0.00001
+  lr_scheduler_type: "constant"
+  lr_warmup_ratio: 0.01
+  epochs: 1
+  temperature: 1.0
+  grad_clip: 0.1
+  kl_coef: 0.0
+  entropy_coeff: 0.0
+  max_train_len: null
+  max_generation_len: &max_generation_len 4096
+  lora_cfg: &lora_cfg
+    lora_rank: 32
+    lora_alpha: 32
+    lora_dropout: 0.0
+    target_modules:
+      - "q_proj"
+      - "k_proj"
+      - "v_proj"
+      - "o_proj"
+      - "gate_proj"
+      - "up_proj"
+      - "down_proj"
+  activation_checkpointing: false
+  gradient_checkpointing: false
+  use_trainer_cache: false
+
+replay_buffer:
+  type: "episode_buffer"
+  flatten: true
+  max_buffer_size: 64
+  reward_transformations:
+    final: {}
+    step: {}
+    sampling:
+      group_relative_advantage: {}
+
+vllm_config:
+  model_name: *model_name
+  temperature: 1.0
+  top_k: 100
+  top_p: 0.95
+  max_tokens: *max_generation_len
+  max_parallel_seq: 64
+  max_loras: 8
+  max_model_len: 8192
+  lora_config: *lora_cfg

@@ -101,33 +101,52 @@ class EpisodeBuffer(BaseBuffer):
         self.episodes: List[List[Step]] = []
         self.mutex = Lock()
 
+    def _get_full_groups(self) -> tuple:
+        """Returns (full_group_list, max_group_size). Full groups are groups whose size equals max_group_size."""
+        groups: dict = {}
+        for ep in self.episodes:
+            seed = ep[0].step_info.get("seed") if ep and ep[0].step_info else None
+            key = seed if seed is not None else id(ep)
+            groups.setdefault(key, []).append(ep)
+        if not groups:
+            return [], 0
+        max_group_size = max(len(g) for g in groups.values())
+        return [g for g in groups.values() if len(g) == max_group_size], max_group_size
+
     def add_player_trajectory(self, player_traj: PlayerTrajectory, env_id: str):
         episode = []
         final_reward = self.final_reward_transformation(reward=player_traj.final_reward, pid=player_traj.pid, env_id=env_id) if self.final_reward_transformation else player_traj.final_reward
         for idx in list(range(len(player_traj.obs))):
             step_reward = final_reward if idx == len(player_traj.obs) - 1 else 0.0
             step_reward = self.step_reward_transformation(player_traj=player_traj, step_index=idx, reward=step_reward) if self.step_reward_transformation else step_reward
-            episode.append(Step(pid=player_traj.pid, obs=player_traj.obs[idx], prompt=player_traj.prompts[idx], prompt_ids=player_traj.prompt_ids[idx], completion=player_traj.completions[idx], completion_ids=player_traj.completion_ids[idx], completion_logprobs=player_traj.completion_logprobs[idx], reward=step_reward, env_id=env_id, step_info={"raw_reward": player_traj.final_reward, "env_reward": final_reward, "step_reward": step_reward}))
+            episode.append(Step(pid=player_traj.pid, obs=player_traj.obs[idx], prompt=player_traj.prompts[idx], prompt_ids=player_traj.prompt_ids[idx], completion=player_traj.completions[idx], completion_ids=player_traj.completion_ids[idx], completion_logprobs=player_traj.completion_logprobs[idx], reward=step_reward, env_id=env_id, step_info={"raw_reward": player_traj.final_reward, "env_reward": final_reward, "step_reward": step_reward, "seed": player_traj.game_info.get("seed")}))
         if len(episode) > 0:
             with self.mutex:
                 self.episodes.append(episode)
-                excess_num_samples = max(0, len(tree.flatten(self.episodes)) - self.max_buffer_size)
-                self.logger.info(f"BUFFER NUM of STEP {len(tree.flatten(self.episodes))}")
+                full_groups, max_group_size = self._get_full_groups()
+                usable_episodes = len(full_groups) * max_group_size
+                self.logger.info(f"BUFFER full-group episodes: {usable_episodes} ({len(full_groups)} groups of size {max_group_size})")
+                excess_num_samples = max(0, usable_episodes - self.max_buffer_size)
                 while excess_num_samples > 0:
-                    randm_sampled = random.sample(self.episodes, 1)
-                    for b in randm_sampled: self.episodes.remove(b)
-                    excess_num_samples = max(0, len(tree.flatten(self.episodes)) - self.max_buffer_size)
-        
+                    full_groups, max_group_size = self._get_full_groups()
+                    if not full_groups: break
+                    group_to_remove = random.choice(full_groups)
+                    for ep in group_to_remove: self.episodes.remove(ep)
+                    full_groups, max_group_size = self._get_full_groups()
+                    usable_episodes = len(full_groups) * max_group_size
+                    excess_num_samples = max(0, usable_episodes - self.max_buffer_size)
+
     def get_batch(self, batch_size: int) -> Union[List[List[Step]], List[Step]]:
         with self.mutex:
-            assert len(tree.flatten(self.episodes)) >= batch_size
-            step_count = 0
+            full_groups, max_group_size = self._get_full_groups()
+            assert len(full_groups) * max_group_size >= batch_size
+            random.shuffle(full_groups)
+            episode_count = 0
             sampled_episodes = []
-            random.shuffle(self.episodes)
-            for ep in self.episodes:
-                sampled_episodes.append(ep)
-                step_count += len(ep)
-                if step_count >= batch_size: break
+            for group in full_groups:
+                sampled_episodes.extend(group)
+                episode_count += len(group)
+                if episode_count >= batch_size: break
             for ep in sampled_episodes: self.episodes.remove(ep)
         sampled_episodes = self.sampling_reward_transformation(sampled_episodes) if self.sampling_reward_transformation is not None else sampled_episodes
         try: write_training_data_to_file(batch=tree.flatten(sampled_episodes), filename=os.path.join(self.local_storage_dir, f"train_data_step_{self.training_steps}.csv"))
@@ -137,7 +156,9 @@ class EpisodeBuffer(BaseBuffer):
         return tree.flatten(sampled_episodes) if self.flatten else sampled_episodes
 
     def stop(self):                 self.collect = False
-    def size(self) -> int:          return len(tree.flatten(self.episodes))
+    def size(self) -> int:
+        full_groups, max_group_size = self._get_full_groups()
+        return len(full_groups) * max_group_size
     def continue_collection(self):  return self.collect
     def clear(self):
         with self.mutex: 

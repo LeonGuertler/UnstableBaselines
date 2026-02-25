@@ -139,7 +139,9 @@ class PPOLearner(BaseLearner):
                 for k, v in update_metrics.items(): metrics_acc[k] = metrics_acc.get(k, 0.0) + v
                 self.logger.info(f"Epoch {epoch+1}/{self.epochs} actor mini-step metrics: {update_metrics}")
                 if self.engine.is_gradient_accumulation_boundary(): metrics_acc['grad_norm_actor'] = (sum(safe_get_full_grad(p).norm(2).cpu()**2 for p in self._policy_params if safe_get_full_grad(p) is not None) ** 0.5).item()
-                if self.critic_engine.is_gradient_accumulation_boundary(): metrics_acc['grad_norm_critic'] = (sum(safe_get_full_grad(p).norm(2).cpu()**2 for p in self._value_params if safe_get_full_grad(p) is not None) ** 0.5).item()
+                if self.critic_engine.is_gradient_accumulation_boundary(): 
+                    print('GRAD NORM', (sum(safe_get_full_grad(p).norm(2).cpu()**2 for p in self._value_params if safe_get_full_grad(p) is not None) ** 0.5).item())
+                    metrics_acc['grad_norm_critic'] = (sum(safe_get_full_grad(p).norm(2).cpu()**2 for p in self._value_params if safe_get_full_grad(p) is not None) ** 0.5).item()
                 self.engine.step()
                 self.critic_engine.step()
         for k in metrics_acc: 

@@ -98,8 +98,9 @@ class TrainEnvSpec:
     env_id: str
     num_players: int
     num_actors: int
-    prompt_template: str 
+    prompt_template: str
     action_extraction_fn: str = "default"
+    group_size: int = 1
 
 @dataclass
 class EvalEnvSpec:

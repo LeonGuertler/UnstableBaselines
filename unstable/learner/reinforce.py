@@ -14,7 +14,7 @@ class REINFORCELearner(BaseLearner):
         self.epochs = epochs
  
     def _micro_batch_update_step(self, steps):
-        _, _, input_ids, advs, vllm_logprobs, lengths, attention_mask, response_mask, pct_truncated, _ = self._prepare_batch(steps=steps)
+        _, _, input_ids, advs, tok_vllm_logp, lengths, attention_mask, response_mask, pct_truncated, _ = self._prepare_batch(steps=steps)
         # Compute reference log probs with base model
         with torch.no_grad():
             self.model.disable_adapter_layers()
@@ -27,23 +27,35 @@ class REINFORCELearner(BaseLearner):
         logits = out.logits[:, :-1, :] / self.temperature
         logp = torch.nn.functional.log_softmax(logits, dim=-1)
         tok_logp = logp.gather(-1, input_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
-        seq_logp = (tok_logp * response_mask).sum(1) / self.max_generation_len
-        # Entropy (computed from raw logits, matching TRL's entropy_from_logits)
+        # Entropy
         probs = torch.softmax(logits, dim=-1)
-        entropy_per_token = torch.logsumexp(logits, dim=-1) - (probs * logits).sum(dim=-1)
-        entropy_seq = self._masked_mean(entropy_per_token, response_mask, axis=1)
+        entropy= torch.logsumexp(logits, dim=-1) - (probs * logits).sum(dim=-1)
+        seq_entropy = self._masked_mean(entropy, response_mask, axis=1)
         # KL divergence against base model
         kl_seq = self._masked_mean(torch.exp(tok_logp - ref_tok_logp) - (tok_logp - ref_tok_logp) - 1, response_mask, axis=1)
         # Importance ratio for off-policy correction
-        vllm_seq_logp = (vllm_logprobs * response_mask).sum(1) / self.max_generation_len
-        ratio = torch.exp(seq_logp - vllm_seq_logp)
+        ratio = torch.exp(tok_logp - tok_vllm_logp)
         # Policy loss
-        policy_loss = -(advs * ratio).mean()
+        tok_policy_loss = -advs.unsqueeze(1) * ratio
+        policy_loss = ((tok_policy_loss * response_mask).sum(1) / response_mask.sum(1).clamp(min=1)).mean()
         kl_loss = self.kl_coef * kl_seq.mean()
-        entropy_loss = -self.entropy_coeff * entropy_seq.mean()
+        entropy_loss = -self.entropy_coeff * seq_entropy.mean()
         loss = policy_loss + kl_loss + entropy_loss
         self.engine.backward(loss)
-        return {"loss": loss.item(), "policy_loss": policy_loss.item(), "kl_loss": kl_loss.item(), "seq_logp_mean": seq_logp.mean().item(), "ref_logp_mean": (ref_tok_logp * response_mask).sum(1).mean().item() / self.max_generation_len, "vllm_seq_logp_mean": vllm_seq_logp.mean().item(), "avg_train_len": sum(lengths) / len(lengths), "pct_truncated": pct_truncated, "offpolicy_ratio": ratio.mean().item(), "kl_seq": kl_seq.mean().item(), "entropy": entropy_seq.mean().item()}
+        n_resp_tokens = response_mask.sum()
+        return {
+            "loss": loss.item(),
+            "policy_loss": policy_loss.item(),
+            "kl_loss": kl_loss.item(),
+            "mean_logp": (tok_logp * response_mask).sum().item() / n_resp_tokens.item(),
+            "ref_logp_mean": (ref_tok_logp * response_mask).sum().item() / n_resp_tokens.item(),
+            "vllm_logp_mean": (tok_vllm_logp * response_mask).sum().item() / n_resp_tokens.item(),
+            "avg_train_len": sum(lengths) / len(lengths),
+            "pct_truncated": pct_truncated,
+            "offpolicy_ratio": (ratio * response_mask).sum().item() / n_resp_tokens.item(),
+            "kl_seq": kl_seq.mean().item(),
+            "entropy": seq_entropy.mean().item(),
+        }
     
     def _update(self, batch):
         from deepspeed.utils import safe_get_full_grad
@@ -56,8 +68,11 @@ class REINFORCELearner(BaseLearner):
                 update_metrics = self._micro_batch_update_step(sub)
                 for k, v in update_metrics.items(): metrics_acc[k] = metrics_acc.get(k, 0.0) + v
                 self.logger.info(f"Epoch {epoch+1}/{self.epochs} mini-step metrics: {update_metrics}")
-                if self.engine.is_gradient_accumulation_boundary(): metrics_acc['grad_norm'] = metrics_acc.get('grad_norm', 0.0) + (sum(safe_get_full_grad(p).norm(2).cpu()**2 for p in self.model.parameters() if safe_get_full_grad(p) is not None) ** 0.5).item()
+                if self.engine.is_gradient_accumulation_boundary():
+                    metrics_acc['grad_norm'] = metrics_acc.get('grad_norm', 0.0) + (sum(safe_get_full_grad(p).norm(2).cpu()**2 for p in self._policy_params if safe_get_full_grad(p) is not None) ** 0.5).item()
                 self.engine.step()
-        for k in update_metrics: metrics_acc[k] /= total_steps
+        for k in metrics_acc: 
+            if k == 'grad_norm': metrics_acc[k] /= self.epochs
+            else: metrics_acc[k] /= total_steps
         self.logger.info(f"Step metrics: {metrics_acc}")
         return metrics_acc

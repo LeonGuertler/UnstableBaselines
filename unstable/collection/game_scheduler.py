@@ -49,7 +49,7 @@ def run_game(game_spec: GameSpec, actor: Union["VLLMActor", dict[int, "VLLMActor
         if done: break
     final_rewards, game_info = env.close()
     for pid in agents.keys():
-        if agents[pid]["traj"]!=None: agents[pid]["traj"].final_reward=final_rewards[pid]; agents[pid]["traj"].game_info=game_info[pid]; agents[pid]["traj"].num_turns=turn
+        if agents[pid]["traj"]!=None: agents[pid]["traj"].final_reward=final_rewards[pid]; agents[pid]["traj"].game_info={**game_info[pid], "seed": game_spec.seed}; agents[pid]["traj"].num_turns=turn
         if game_info[pid]["invalid_move"] and agents[pid]["traj"]!=None: agents[pid]["traj"].format_feedbacks[-1]["invalid_move"]=True
     game_information.final_rewards=final_rewards; game_information.num_turns=turn; game_information.game_info=game_info
     return game_information, [agents[pid]["traj"] for pid in agents.keys() if agents[pid]["traj"]!=None]
@@ -137,7 +137,7 @@ class GameScheduler:
                                                                           temperature=opp_sampling.get("temperature"), top_p=opp_sampling.get("top_p"), top_k=opp_sampling.get("top_k"), max_tokens=opp_sampling.get("max_tokens")))
                     else: agent_specs.append(AgentSpec(pid=pid, kind=kind, lora_path=opp_lora_path, openrouter_name=opp_name_or_path)) # OpenRouter agents handle their own sampling
                     self._running_jobs[self._game_idx]["models"].append({"uid": opp_uid, "pid": pid, "type": "opponent"})
-            game_spec = GameSpec(game_idx=self._game_idx, env_id=env_spec.env_id, seed=self._game_idx, agent_specs=agent_specs) # populate GameSpec
+            game_spec = GameSpec(game_idx=self._game_idx, env_id=env_spec.env_id, seed=self._game_idx // env_spec.group_size, agent_specs=agent_specs) # populate GameSpec
             self._game_idx += 1
             return game_spec
         except Exception as exc:

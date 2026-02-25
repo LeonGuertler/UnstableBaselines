@@ -92,8 +92,14 @@ class ComposeEpisodeSamplingRewardTransforms:
 
 class GroupRelativeAdvantage(EpisodeSamplingRewardTransform):
     def __call__(self, episodes: List[List[Step]], env_id: Optional[str] = None) -> List[List[Step]]:
-        episode_returns = np.array([episode[-1].reward for episode in episodes])
-        mean_return = episode_returns.mean(); std_return = episode_returns.std()+1e-8
-        for episode in episodes:
-            for step in episode: step.reward = (step.reward - mean_return) / std_return
+        groups: dict = {}
+        for ep in episodes:
+            key = ep[0].step_info.get("seed") if ep and ep[0].step_info else None
+            groups.setdefault(key, []).append(ep)
+        for group_episodes in groups.values():
+            group_returns = np.array([ep[-1].reward for ep in group_episodes])
+            mean_return = group_returns.mean(); std_return = group_returns.std() + 1e-8
+            print(f"GroupRelativeAdvantage: env_id={env_id}, group_size={len(group_episodes)}, mean_return={mean_return:.4f}, std_return={std_return:.4f}")
+            for episode in group_episodes:
+                for step in episode: step.reward = (step.reward - mean_return) / std_return
         return episodes

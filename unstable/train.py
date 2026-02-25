@@ -40,7 +40,7 @@ def train(config: Optional[Union[Dict, str]] = 'reinforce', interface: bool = Fa
     env_sampler_config = config['env_sampler']
     env_sampler = get_env_sampler_cls(env_sampler_config.pop('type'))(
         train_env_specs=[
-            TrainEnvSpec(env_id=env['id'], num_players=env['num_players'], num_actors=env['num_actors'], prompt_template=env['prompt_template'])
+            TrainEnvSpec(env_id=env['id'], num_players=env['num_players'], num_actors=env['num_actors'], prompt_template=env['prompt_template'], action_extraction_fn=env.get('action_extraction_fn', 'default'), group_size=env.get('group_size', 1))
             for env in env_sampler_config.pop('train')
         ],
         eval_env_specs=[
