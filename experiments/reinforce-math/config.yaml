@@ -1,12 +1,12 @@
-run: "default"
+run: "reinforce-math"
 project: "Unstable-Baselines"
-model_name: &model_name "Qwen/Qwen3-1.7B-Base"
-max_concurrent_workers: 16
-collection_workers: 16
-evaluation_workers: 0
-evaluation_runs: 500
-evaluation_steps: 10000
-logging_dir: "outputs"
+model_name: &model_name "Qwen/Qwen3-4B-Base"
+max_concurrent_workers: 384
+collection_workers: 384
+evaluation_workers: 384
+evaluation_runs: 1000
+evaluation_steps: 20
+logging_dir: "experiments/reinforce-math/outputs"
 training_iterations: &training_iterations 600
 
 checkpoint:
@@ -15,6 +15,7 @@ checkpoint:
     path: null
   iteration: 0
   wandb_id: null
+  eval_checkpoints: []
 
 env_sampler:
   type: "random"
@@ -23,12 +24,13 @@ env_sampler:
       num_players: 1
       num_actors: 1
       prompt_template: "qwen3-math"
-      action_extraction_fn: "none"
+      action_extraction_fn: "judge"
       group_size: 8
   eval:
     - id: "math500-v0"
       num_players: 1
       prompt_template: "qwen3-math"
+      action_extraction_fn: "judge"
       fixed_opponent: null
 
 action_sampler:
@@ -36,13 +38,14 @@ action_sampler:
 
 model_sampler:
   type: "mirror"
+  fixed_checkpoints: []
 
 learner:
+  type: "grpo"
   num_gpus: 1
-  type: "reinforce"
   total_training_steps: *training_iterations
   model_name: *model_name
-  local_batch_size: 32
+  local_batch_size: 512
   micro_batch_size: 1
   learning_rate: 0.00001
   lr_scheduler_type: "constant"
@@ -50,6 +53,7 @@ learner:
   epochs: 1
   temperature: 1.0
   grad_clip: 0.1
+  loss: "grpo"
   kl_coef: 0.0
   entropy_coeff: 0.0
   max_train_len: null
@@ -73,10 +77,14 @@ learner:
 replay_buffer:
   type: "episode_buffer"
   flatten: true
-  max_buffer_size: 64
+  max_buffer_size: 1024
+  group_size: 8
   reward_transformations:
     final: {}
-    step: {}
+    step:
+      format_reward:
+        reward: 0.1
+        penalty: -0.1
     sampling:
       group_relative_advantage: {}
 
@@ -86,7 +94,8 @@ vllm_config:
   top_k: 100
   top_p: 0.95
   max_tokens: *max_generation_len
-  max_parallel_seq: 64
-  max_loras: 8
+  max_parallel_seq: 128
+  max_loras: 24
+  max_cpu_loras: 24
   max_model_len: 8192
   lora_config: *lora_cfg

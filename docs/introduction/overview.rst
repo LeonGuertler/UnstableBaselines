@@ -4,13 +4,19 @@ Overview
 Why Unstable Baselines?
 """""""""""""""""""""""
 UnstableBaselines is an Async-, Online-, Multi-Agent RL library focused on simplicity and hackability. 
-It is designed for fast research iteration on reasoning models for TextArena games with a LoRA-first workflow. 
+It is designed for fast research iteration on reasoning models for TextArena environments with a LoRA-first workflow. 
 We do not harness complex GPU-scaling strategies and, therefore, offer lightweight and easy to use RL for small models. 
 We believe reinforcement learning should not only belong to large research groups with massive compute resources.
 Unstable Baselines is, therefore, designed to run learning algorithms on a single GPU, making reinforcement learning accessible for (almost) everyone.
 
+What is self-play?
+""""""""""""""""""
+In self-play, the model plays against recent versions of itself rather than a fixed opponent.
+This creates an automatic curriculum: as the model improves, its opponents improve too, so the
+training signal stays challenging throughout.
+
 Why Reinforcement Learning for Text-Based Games?
-""""""""""""""""""""""""""""""""""""""""""""""""""""
+"""""""""""""""""""""""""""""""""""""""""""""""""
 Text-based games provide an ideal setting for developing reasoning-capable language models through interaction rather than imitation. 
 Self-play introduces an emergent curriculum: as agents improve, they automatically encounter stronger opponents and more complex situations, ensuring a continuously evolving training signal. 
 This interplay of interaction, adaptation, and self-generated challenge makes RL in text-based games a powerful approach to building adaptive, self-improving language agents capable of grounded reasoning and communication.

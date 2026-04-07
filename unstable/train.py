@@ -17,7 +17,7 @@ from unstable.utils.templates import (
 )
 
 
-def train(config: Optional[Union[Dict, str]] = 'reinforce', interface: bool = False):
+def train(config: Optional[Union[Dict, str]] = 'grpo', interface: bool = False):
     # Configuration
     if isinstance(config, str): config = get_algorithm_config(config)
     num_collection_workers = config.get('collection_workers', 256)
@@ -27,13 +27,16 @@ def train(config: Optional[Union[Dict, str]] = 'reinforce', interface: bool = Fa
     ray.init(config.get('head', None), namespace=config.get('project', 'UnstableBaselines'))
     learner_config = config['learner']; checkpoint_config = config['checkpoint']
     learner_gpus = learner_config.pop('num_gpus', 1)
-    learner_placement_group = placement_group(bundles=[{"GPU": 1, "CPU": 1} for _ in range(learner_gpus)], strategy="PACK")
+    gpus_per_learner = learner_config.pop('gpus_per_learner', 1)
+    learner_placement_group = placement_group(bundles=[{"GPU": gpus_per_learner, "CPU": 1} for _ in range(learner_gpus)], strategy="PACK")
     ray.get(learner_placement_group.ready())
     
     # Tracker
     tracker = Tracker.options(name="Tracker").remote(
-        run_name=f"{config.get('run', 'Run')}", 
-        wandb_project=config.get('project', 'UnstableBaselines'), wandb_id=checkpoint_config.get('wandb_id', None), wandb_config=config
+        run_name=f"{config.get('run', 'Run')}",
+        wandb_project=config.get('project', 'UnstableBaselines'), wandb_id=checkpoint_config.get('wandb_id', None), wandb_config=config,
+        logging_dir=config.get('logging_dir', 'outputs'),
+        collection_batch_size=config.get('replay_buffer', {}).get('max_buffer_size')
     )
     
     # Environment Sampler
@@ -44,18 +47,24 @@ def train(config: Optional[Union[Dict, str]] = 'reinforce', interface: bool = Fa
             for env in env_sampler_config.pop('train')
         ],
         eval_env_specs=[
-            EvalEnvSpec(env_id=env['id'], num_players=env['num_players'], prompt_template=env.get('prompt_template', 'qwen3-zs'), 
-                        fixed_opponent=env.get("fixed_opponent", "google/gemini-2.0-flash-lite-001"), kind=env.get("kind", "openrouter"))
+            EvalEnvSpec(env_id=env['id'], num_players=env['num_players'], prompt_template=env.get('prompt_template', 'qwen3-zs'),
+                        action_extraction_fn=env.get('action_extraction_fn', 'default'),
+                        fixed_opponent=env.get("fixed_opponent", "google/gemini-2.0-flash-lite-001"), kind=env.get("kind", "openrouter"),
+                        temperature=env.get('temperature'), top_p=env.get('top_p'), top_k=env.get('top_k'), max_tokens=env.get('max_tokens'))
             for env in env_sampler_config.pop('eval')
     ], **env_sampler_config)
     
     # Model Sampler
     model_sampler_config = config['model_sampler']
     fixed_opponents = model_sampler_config.pop('fixed_opponents') if 'fixed_opponents' in model_sampler_config else []
-    model_sampler = get_model_sampler_cls(model_sampler_config.pop('type')).options(name="ModelSampler").remote(tracker=tracker, **model_sampler_config) 
+    fixed_checkpoints = model_sampler_config.pop('fixed_checkpoints') if 'fixed_checkpoints' in model_sampler_config else []
+    model_sampler = get_model_sampler_cls(model_sampler_config.pop('type')).options(name="ModelSampler").remote(tracker=tracker, **model_sampler_config)
     for fixed_opponent in fixed_opponents: ray.get(model_sampler.add_fixed.remote(name=fixed_opponent))
+    for ckpt in fixed_checkpoints: ray.get(model_sampler.add_fixed_checkpoint.remote(uid=ckpt['uid'], path=ckpt['path']))
     policy_ckpt = checkpoint_config['policy']
     ray.get(model_sampler.add_checkpoint.remote(uid=policy_ckpt['uid'], path=policy_ckpt['path'], iteration=checkpoint_config['iteration'], eval=True))
+    for ckpt in checkpoint_config.get('eval_checkpoints', []):
+        ray.get(model_sampler.add_eval_checkpoint.remote(uid=ckpt['uid'], path=ckpt['path']))
     
     # Replay Buffer
     replay_buffer_config = config['replay_buffer']; reward_transformations = replay_buffer_config.pop('reward_transformations'); buffer_type = replay_buffer_config.pop('type')
@@ -68,8 +77,9 @@ def train(config: Optional[Union[Dict, str]] = 'reinforce', interface: bool = Fa
     
     # Learning algorithm
     learner_type = learner_config.pop('type')
+    learner_cls = learner_type if callable(learner_type) else get_learner_cls(learner_type)
     leaners = [
-        get_learner_cls(learner_type).options(num_gpus=1, name=f"Learner-{i}", scheduling_strategy=PlacementGroupSchedulingStrategy(placement_group=learner_placement_group, placement_group_bundle_index=i)).remote(
+        learner_cls.options(num_gpus=gpus_per_learner, name=f"Learner-{i}", scheduling_strategy=PlacementGroupSchedulingStrategy(placement_group=learner_placement_group, placement_group_bundle_index=i)).remote(
             **learner_config,
             checkpoint_cfg=checkpoint_config,
             buffer=replay_buffer,
@@ -101,7 +111,7 @@ def train(config: Optional[Union[Dict, str]] = 'reinforce', interface: bool = Fa
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", type=str, default="reinforce", help="Algorithm . Either 'reinforce', 'a2c', 'ppo', 'grpo', or a path to a custom config file.")
+    parser.add_argument("--config", type=str, default="grpo", help="Algorithm. Either 'grpo', 'ppo', or a path to a custom config file.")
     parser.add_argument("--interface", action="store_true", help="Enable monitoring terminal interface")
     args = parser.parse_args()
     train(config=args.config, interface=args.interface)

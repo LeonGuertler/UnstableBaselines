@@ -1,19 +1,16 @@
 run: "default"
 project: "Unstable-Baselines"
 model_name: &model_name "Qwen/Qwen3-1.7B-Base"
-max_concurrent_workers: 384
-collection_workers: 384
-evaluation_workers: 384
+max_concurrent_workers: 60
+collection_workers: 60
+evaluation_workers: 0
 evaluation_runs: 256
 evaluation_steps: 25
 logging_dir: "outputs"
 training_iterations: &training_iterations 600
 
 checkpoint:
-  policy: 
-    uid: "base"
-    path: null
-  critic:
+  policy:
     uid: "base"
     path: null
   iteration: 0
@@ -23,18 +20,11 @@ checkpoint:
 env_sampler:
   type: "random"
   train:
-    - id: "SimpleTak-v0-train"
+    - id: "efficiency-aime-2025-v0"
       num_players: 2
       num_actors: 2
       prompt_template: "qwen3-zs"
-  eval:
-    - id: "SimpleTak-v0-train"
-      num_players: 2
-      prompt_template: "qwen3-zs"
-      kind: checkpoint
-      temperature: 0.6
-      top_k: 50
-      top_p: 0.95
+  eval: []
 
 action_sampler:
   type: "default"
@@ -44,37 +34,24 @@ model_sampler:
   opponent_top_k: 20
   opponent_temperature: 0.1
   fixed_checkpoints: []
-
+  
 learner:
-  type: "ppo"
   num_gpus: 1
+  type: "grpo"
   total_training_steps: *training_iterations
-  eval_steps: 100
+  eval_steps: 200
   model_name: *model_name
+  local_batch_size: 64
+  micro_batch_size: 1
+  learning_rate: 0.00001
+  lr_scheduler_type: "constant"
+  lr_warmup_ratio: 0.01
   epochs: 1
   loss: "grpo"
   temperature: 1.0
-  local_batch_size: 256
-  micro_batch_size: 1
-  learning_rate: 0.000001
-  lr_scheduler_type: "constant"
-  lr_warmup_ratio: 0.01
-  infer_micro_batch_size: 4
-  critic_learning_rate: 0.00001
-  critic_lr_scheduler_type: "constant"
-  critic_lr_warmup_ratio: 0.01
-  upper_clip_ratio: 0.4
-  lower_clip_ratio: 0.2
   grad_clip: 0.2
-  entropy_coeff: 0.0
-  value_coeff: 0.5
-  beta: 0.0
-  gamma: 0.7
-  gae_lambda: 0.9
-  normalize_adv: true
-  clip_value: 0.2
   max_train_len: null
-  max_generation_len: &max_generation_len 4096
+  max_generation_len: &max_generation_len 16384
   lora_cfg: &lora_cfg
     lora_rank: 32
     lora_alpha: 32
@@ -92,17 +69,21 @@ learner:
   use_trainer_cache: false
 
 replay_buffer:
-  type: "episode_buffer"
+  type: "step_buffer"
   max_buffer_size: 768
   reward_transformations:
-    final: {}
+    final:
+      role_advantage: {}
     step:
       format_reward:
         reward: 0.1
+        penalty: -0.1
       invalid_move_penalty:
         reward: 0.2
         penalty: -0.2
-    sampling: {}
+    sampling:
+      normalize_by_env:
+        z_score: true
 
 vllm_config:
   model_name: *model_name
@@ -112,5 +93,5 @@ vllm_config:
   max_tokens: *max_generation_len
   max_parallel_seq: 100
   max_loras: 8
-  max_model_len: 8192
+  max_model_len: 20000
   lora_config: *lora_cfg

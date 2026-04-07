@@ -49,7 +49,7 @@ def run_game(game_spec: GameSpec, actor: Union["VLLMActor", dict[int, "VLLMActor
         if done: break
     final_rewards, game_info = env.close()
     for pid in agents.keys():
-        if agents[pid]["traj"]!=None: agents[pid]["traj"].final_reward=final_rewards[pid]; agents[pid]["traj"].game_info={**game_info[pid], "seed": game_spec.seed}; agents[pid]["traj"].num_turns=turn
+        if agents[pid]["traj"]!=None: agents[pid]["traj"].final_reward=final_rewards[pid]; agents[pid]["traj"].game_info={**game_info[pid], "seed": game_spec.seed}; agents[pid]["traj"].num_turns=turn; agents[pid]["traj"].group_id=game_spec.group_id
         if game_info[pid]["invalid_move"] and agents[pid]["traj"]!=None: agents[pid]["traj"].format_feedbacks[-1]["invalid_move"]=True
     game_information.final_rewards=final_rewards; game_information.num_turns=turn; game_information.game_info=game_info
     return game_information, [agents[pid]["traj"] for pid in agents.keys() if agents[pid]["traj"]!=None]
@@ -83,14 +83,13 @@ class GameScheduler:
     def collect(self, num_train_workers: int, num_eval_workers: Optional[int]=None):
         self.logger.info("entered collect func")
         while ray.get(self.buffer.continue_collection.remote()):
-            self.logger.info("entered colelct loop")
+            self.logger.info("entered collect loop")
             self._launch_jobs(num_train_workers, num_eval_workers)
             if not self.flight: continue
             done_ref, _ = ray.wait(list(self.flight), num_returns=1)
             self._handle_finished_job(done_ref[0])
         
-    def _total_running(self): return len(self.flight)
-    def _under_total_cap(self): return self.max_concurrent_workers is None or self._total_running() < self.max_concurrent_workers
+    def _under_total_cap(self): return self.max_concurrent_workers is None or len(self.flight)< self.max_concurrent_workers
 
     def _launch_jobs(self, max_train: int, max_eval: Optional[int]):
         # Eval first (priority)
@@ -98,8 +97,7 @@ class GameScheduler:
             while self._num_running("eval") < max_eval and self._under_total_cap():
                 try:
                     game_spec = self._next_eval_job()
-                    if game_spec is None:
-                        break  # not triggered yet
+                    if game_spec is None: break
                     self.logger.info(f"received eval game_spec: {game_spec}")
                     ref = run_game.remote(game_spec, next(self._actor_iter))
                     self.flight[ref] = TaskMeta("eval", game_spec.env_id)
@@ -133,11 +131,12 @@ class GameScheduler:
                     agent_specs.append(AgentSpec(pid=pid, kind="checkpoint", collect_data=True, lora_path=current_ckpt_lora_path, prompt_template=env_spec.prompt_template, action_extraction_fn=env_spec.action_extraction_fn))
                 else:
                     opp_uid, kind, opp_lora_path, opp_name_or_path, opp_sampling = ray.get(self.model_sampler.sample_opponent.remote())
-                    if kind == "checkpoint": agent_specs.append(AgentSpec(pid=pid, kind="checkpoint", collect_data=False, lora_path=opp_name_or_path, prompt_template=env_spec.prompt_template, action_extraction_fn=env_spec.action_extraction_fn,
+                    if kind in ("checkpoint", "fixed_checkpoint"): agent_specs.append(AgentSpec(pid=pid, kind="checkpoint", collect_data=False, lora_path=opp_name_or_path, prompt_template=env_spec.prompt_template, action_extraction_fn=env_spec.action_extraction_fn,
                                                                           temperature=opp_sampling.get("temperature"), top_p=opp_sampling.get("top_p"), top_k=opp_sampling.get("top_k"), max_tokens=opp_sampling.get("max_tokens")))
-                    else: agent_specs.append(AgentSpec(pid=pid, kind=kind, lora_path=opp_lora_path, openrouter_name=opp_name_or_path)) # OpenRouter agents handle their own sampling
+                    else: agent_specs.append(AgentSpec(pid=pid, kind=kind, lora_path=opp_lora_path, openrouter_name=opp_name_or_path))
                     self._running_jobs[self._game_idx]["models"].append({"uid": opp_uid, "pid": pid, "type": "opponent"})
-            game_spec = GameSpec(game_idx=self._game_idx, env_id=env_spec.env_id, seed=self._game_idx // env_spec.group_size, agent_specs=agent_specs) # populate GameSpec
+            group_id = self._game_idx // env_spec.group_size
+            game_spec = GameSpec(game_idx=self._game_idx, env_id=env_spec.env_id, seed=group_id, agent_specs=agent_specs, group_id=group_id)
             self._game_idx += 1
             return game_spec
         except Exception as exc:
@@ -169,11 +168,12 @@ class GameScheduler:
                 eval_opponent_name = opp_uid
             else: eval_opponent_name = env_spec.fixed_opponent
             for i, pid in enumerate(pids):
-                if i == 0: agent_specs.append(AgentSpec(pid=pid, kind="checkpoint", collect_data=True, lora_path=current_ckpt_lora_path, prompt_template=env_spec.prompt_template, action_extraction_fn=env_spec.action_extraction_fn, sampler=self.action_sampler))
+                if i == 0: agent_specs.append(AgentSpec(pid=pid, kind="checkpoint", collect_data=True, lora_path=current_ckpt_lora_path, prompt_template=env_spec.prompt_template, action_extraction_fn=env_spec.action_extraction_fn, sampler=self.action_sampler,
+                                                        temperature=env_spec.temperature, top_p=env_spec.top_p, top_k=env_spec.top_k, max_tokens=env_spec.max_tokens))
                 else:
                     if env_spec.kind == "checkpoint":
                         agent_specs.append(AgentSpec(pid=pid, kind="checkpoint", collect_data=False, lora_path=opp_path, prompt_template=env_spec.prompt_template, action_extraction_fn=env_spec.action_extraction_fn,
-                                                    temperature=opp_sampling.get("temperature"), top_p=opp_sampling.get("top_p"), top_k=opp_sampling.get("top_k"), max_tokens=opp_sampling.get("max_tokens")))
+                                                    temperature=env_spec.temperature, top_p=env_spec.top_p, top_k=env_spec.top_k, max_tokens=env_spec.max_tokens))
                     else: agent_specs.append(AgentSpec(pid=pid, kind="openrouter", lora_path=None, openrouter_name=env_spec.fixed_opponent, sampler=self.action_sampler))
             game_spec = GameSpec(game_idx=self._game_idx, env_id=env_spec.env_id, seed=self._game_idx, agent_specs=agent_specs, eval_model_pid=pids[0], eval_opponent_name=eval_opponent_name, eval_iteration=self._eval_iteration)
             self._game_idx += 1

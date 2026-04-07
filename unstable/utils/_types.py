@@ -25,6 +25,7 @@ class Step:
     reward: float
     env_id: str
     step_info: Optional[Dict]
+    group_id: Optional[int] = None
 
 @dataclass
 class PlayerTrajectory:
@@ -41,6 +42,7 @@ class PlayerTrajectory:
     step_infos:         List[Dict] = field(default_factory=list)
     game_info:          Dict = field(default_factory=dict)
     num_turns:          int = field(default_factory=int)
+    group_id:           Optional[int] = None
 
 
 @dataclass
@@ -87,6 +89,7 @@ class GameSpec:
     eval_model_pid: Optional[int] = None
     eval_opponent_name: Optional[str] = None
     eval_iteration: Optional[int] = None
+    group_id: Optional[int] = None
 
 @dataclass
 class TaskMeta:
@@ -110,6 +113,10 @@ class EvalEnvSpec:
     action_extraction_fn: str = "default"
     fixed_opponent: str = "google/gemini-2.0-flash-lite-001"
     kind: str = "openrouter"               # "openrouter" | "checkpoint"
+    temperature: Optional[float] = None
+    top_p: Optional[float] = None
+    top_k: Optional[int] = None
+    max_tokens: Optional[int] = None
 
 @dataclass
 class ModelMeta:

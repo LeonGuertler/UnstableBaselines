@@ -1,4 +1,4 @@
 from unstable.learner.ppo import PPOLearner
-from unstable.learner.reinforce import REINFORCELearner
+from unstable.learner.grpo import GRPOLearner
 
-__all__ = ["PPOLearner", "REINFORCELearner"]
+__all__ = ["PPOLearner", "GRPOLearner"]

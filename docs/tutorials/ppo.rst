@@ -1,106 +1,64 @@
-Train a reasoning model to play tic tac toe with PPO
-=====================================================
+PPO Self-Play on SimpleTak
+==========================
 
-In this tutorial, we train a small language model to play Tic Tac Toe using Proximal Policy Optimization and Generalized Advantage Estimation.
-We use self-play with a mirror model sampler, so the model learns by playing against copies of itself.
+**Proximal Policy Optimization (PPO)** learns a value function alongside the policy and uses Generalized Advantage Estimation (GAE) to reduce variance in the gradient signal.
+The clipped surrogate objective prevents large policy updates that could destabilize training.
 
-Setup
-"""""
-
-Make sure you have Unstable Baselines installed:
+Full experiment: ``experiments/ppo/``
 
 .. code-block:: bash
 
-   pip install unstable-rl
+   python experiments/ppo/run.py
 
-Quick start
-"""""""""""
+.. math::
 
-The fastest way to get started is with the ``examples/run.py`` script:
+   A_t = \sum_{k=0}^{T-t} (\gamma \lambda)^k \delta_{t+k}, \quad \delta_t = r_t + \gamma V_\phi(s_{t+1}) - V_\phi(s_t)
 
-.. code-block:: bash
+.. math::
 
-   python examples/run.py \
-       --name "tictactoe-ppo" \
-       --algorithm ppo \
-       --envs "TicTacToe-v0-train" \
-       --model "Qwen/Qwen3-1.7B-Base" \
-       --template "qwen3-zs"
+   \mathcal{L}(\theta)
+   = -\frac{1}{N} \sum_{i=1}^{N}
+     \min\!\left(
+       r_i \, A_i,\;
+       \mathrm{clip}(r_i,\, 1 - \varepsilon_{\text{lo}},\, 1 + \varepsilon_{\text{hi}}) \, A_i
+     \right)
 
-This loads the default PPO config, overrides the environment and model, and starts training.
+.. admonition:: Actor-Critic Architecture
+   :class: tip
 
-Custom config in Python
-"""""""""""""""""""""""
+   The value head is added on top of the base model with a separate LoRA adapter for the critic. Actor and critic share the same backbone — no second model is loaded. During training the adapters are swapped dynamically.
 
-For more control, load and modify the config directly:
-
-.. code-block:: python
-
-   from unstable import train, get_algorithm_config
-
-   config = get_algorithm_config("ppo")
-
-   # Run settings
-   config["run"] = "tictactoe-ppo"
-   config["model_name"] = "Qwen/Qwen3-1.7B-Base"
-   config["training_iterations"] = 500
-
-   # Use the Tic Tac Toe environment
-   config["env_sampler"]["train"] = [
-       {
-           "id": "TicTacToe-v0-train",
-           "num_players": 2,
-           "num_actors": 2,
-           "prompt_template": "qwen3-zs",
-       }
-   ]
-   config["env_sampler"]["eval"] = [
-       {
-           "id": "TicTacToe-v0-train",
-           "num_players": 2,
-           "prompt_template": "qwen3-zs",
-           "fixed_opponent": "google/gemini-2.0-flash-lite-001",
-       }
-   ]
-
-   # Tune hyperparameters for Tic Tac Toe
-   config["learner"]["learning_rate"] = 1e-5
-   config["learner"]["local_batch_size"] = 128
-   config["learner"]["total_training_steps"] = 500
-
-   checkpoint_path = train(config)
-
-Reward shaping
-""""""""""""""
-
-The replay buffer applies reward transformations to the raw game outcomes.
-For Tic Tac Toe, you might want to penalize invalid moves and give a small reward for correct formatting:
-
-.. code-block:: python
-
-   config["replay_buffer"]["reward_transformations"] = {
-       "final": {},
-       "step": {
-           "format_reward": {"reward": 0.1},
-           "invalid_move_penalty": {"reward": 0.1, "penalty": -0.1},
-       },
-       "sampling": {},
-   }
-
-Evaluation
+Key config
 """"""""""
 
-After training, evaluate the checkpoint against a fixed opponent:
+.. code-block:: yaml
 
-.. code-block:: bash
+   learner:
+     type: "ppo"
+     learning_rate: 0.00001
+     local_batch_size: 256
+     epochs: 2
+     gamma: 0.99
+     gae_lambda: 0.95
+     value_coeff: 0.5
+     upper_clip_ratio: 0.4
+     lower_clip_ratio: 0.2
+     normalize_adv: true
 
-   python -m unstable.eval \
-       --checkpoint <checkpoint_path> \
-       --env "TicTacToe-v0-train" \
-       --opponent "google/gemini-2.0-flash-lite-001" \
-       --num_runs 128
+   replay_buffer:
+     type: "episode_buffer"
+     flatten: true
+     reward_transformations:
+       final:
+         role_advantage: {}
+       step:
+         format_reward: {reward: 0.1, penalty: -0.1}
+         invalid_move_penalty: {reward: 0.2, penalty: -0.2}
+       sampling: {}
 
-Results
-""""""""""
+PPO requires ``episode_buffer`` because GAE needs the full episode trajectory to compute returns before training.
 
+Hyperparameters
+"""""""""""""""
 
+See :doc:`../algorithms/ppo` for the full hyperparameter reference.

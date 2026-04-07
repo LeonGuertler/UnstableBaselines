@@ -4,15 +4,17 @@ import ray, torch
 from unstable.learner.base import BaseLearner
 
 @ray.remote
-class REINFORCELearner(BaseLearner):
-    def __init__(self, max_train_len: int, max_generation_len: int, kl_coef: float = 0.0, entropy_coeff: float = 0.0, epochs: int = 2, *args, **kwargs):
+class GRPOLearner(BaseLearner):
+    def __init__(self, max_train_len: int, max_generation_len: int, kl_coef: float = 0.0, entropy_coeff: float = 0.0, epochs: int = 2, loss: str = "drgrpo", clip_eps: float = 0.2, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.max_train_len = max_train_len
         self.max_generation_len = max_generation_len
         self.kl_coef = kl_coef
         self.entropy_coeff = entropy_coeff
         self.epochs = epochs
- 
+        self.loss = loss
+        self.clip_eps = clip_eps
+
     def _micro_batch_update_step(self, steps):
         _, _, input_ids, advs, tok_vllm_logp, lengths, attention_mask, response_mask, pct_truncated, _ = self._prepare_batch(steps=steps)
         # Compute reference log probs with base model
@@ -35,9 +37,16 @@ class REINFORCELearner(BaseLearner):
         kl_seq = self._masked_mean(torch.exp(tok_logp - ref_tok_logp) - (tok_logp - ref_tok_logp) - 1, response_mask, axis=1)
         # Importance ratio for off-policy correction
         ratio = torch.exp(tok_logp - tok_vllm_logp)
-        # Policy loss
-        tok_policy_loss = -advs.unsqueeze(1) * ratio
-        policy_loss = ((tok_policy_loss * response_mask).sum(1) / response_mask.sum(1).clamp(min=1)).mean()
+        # Policy loss (clipped GRPO objective)
+        adv = advs.unsqueeze(1)
+        surr1 = ratio * adv
+        surr2 = torch.clamp(ratio, 1 - self.clip_eps, 1 + self.clip_eps) * adv
+        tok_policy_loss = -torch.min(surr1, surr2)
+        if self.loss in ['grpo']: policy_loss = ((tok_policy_loss * response_mask).sum(1) / response_mask.sum(1).clamp(min=1)).mean()
+        elif self.loss in ['drgrpo']: policy_loss = ((tok_policy_loss * response_mask).sum(1) / self.max_generation_len).mean()
+        else: raise ValueError(f"Unsupported loss summation {self.loss}")
+        clip_ratio = ((ratio - 1).abs() > self.clip_eps).float()
+        pct_clipped = (clip_ratio * response_mask).sum() / response_mask.sum().clamp(min=1)
         kl_loss = self.kl_coef * kl_seq.mean()
         entropy_loss = -self.entropy_coeff * seq_entropy.mean()
         loss = policy_loss + kl_loss + entropy_loss
@@ -53,10 +62,11 @@ class REINFORCELearner(BaseLearner):
             "avg_train_len": sum(lengths) / len(lengths),
             "pct_truncated": pct_truncated,
             "offpolicy_ratio": (ratio * response_mask).sum().item() / n_resp_tokens.item(),
+            "pct_clipped": pct_clipped.item(),
             "kl_seq": kl_seq.mean().item(),
             "entropy": seq_entropy.mean().item(),
         }
-    
+
     def _update(self, batch):
         from deepspeed.utils import safe_get_full_grad
         metrics_acc = {}
@@ -71,7 +81,7 @@ class REINFORCELearner(BaseLearner):
                 if self.engine.is_gradient_accumulation_boundary():
                     metrics_acc['grad_norm'] = metrics_acc.get('grad_norm', 0.0) + (sum(safe_get_full_grad(p).norm(2).cpu()**2 for p in self._policy_params if safe_get_full_grad(p) is not None) ** 0.5).item()
                 self.engine.step()
-        for k in metrics_acc: 
+        for k in metrics_acc:
             if k == 'grad_norm': metrics_acc[k] /= self.epochs
             else: metrics_acc[k] /= total_steps
         self.logger.info(f"Step metrics: {metrics_acc}")

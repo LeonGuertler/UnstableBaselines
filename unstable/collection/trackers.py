@@ -7,12 +7,13 @@ from unstable.utils.misc import write_game_information_to_file
 Scalar = Union[int, float, bool]
 
 class BaseTracker:
-    def __init__(self, run_name: str):
-        self.run_name = run_name 
+    def __init__(self, run_name: str, logging_dir: str = "outputs"):
+        self.run_name = run_name
+        self.logging_dir = logging_dir
         self._build_output_dir()
 
     def _build_output_dir(self):
-        self.output_dir = os.path.join("outputs", str(datetime.datetime.now().strftime('%Y-%m-%d')), str(datetime.datetime.now().strftime('%H-%M-%S')), self.run_name)
+        self.output_dir = os.path.join(self.logging_dir, str(datetime.datetime.now().strftime('%Y-%m-%d')), str(datetime.datetime.now().strftime('%H-%M-%S')), self.run_name)
         os.makedirs(self.output_dir)
         self.output_dirs = {}
         for folder_name in ["training_data", "checkpoints", "logs", "collection", "eval"]: 
@@ -31,8 +32,8 @@ class BaseTracker:
 @ray.remote
 class Tracker(BaseTracker): 
     FLUSH_EVERY = 64
-    def __init__(self, run_name: str, wandb_project: Optional[str]=None, wandb_id: Optional[str]=None, wandb_config: Optional[Dict]=None):
-        super().__init__(run_name=run_name)
+    def __init__(self, run_name: str, wandb_project: Optional[str]=None, wandb_id: Optional[str]=None, wandb_config: Optional[Dict]=None, logging_dir: str = "outputs", collection_batch_size: Optional[int] = None):
+        super().__init__(run_name=run_name, logging_dir=logging_dir)
         self.logger = setup_logger("tracker", self.get_log_dir())
         self.use_wandb = False
         self.learner_step = 0
@@ -43,6 +44,8 @@ class Tracker(BaseTracker):
         self._eval_pending: Dict[int, Dict[str, list]] = {}
         self._last_flush = time.monotonic()
         self._interface_stats = {"gpu_tok_s": {}, "TS": {}, "exploration": {}, "match_counts": {}, "format_success": None, "inv_move_rate": None, "game_len": None}
+        self._collection_batch_size = collection_batch_size
+        self._collection_count = 0
 
     def _put(self, k: str, v: Scalar): self._m[k].append(v)
     def _agg(self, p: str) -> dict[str, Scalar]: return {k: float(np.mean(dq)) for k, dq in self._m.items() if k.startswith(p)}
@@ -72,7 +75,9 @@ class Tracker(BaseTracker):
                 for k, v in traj.format_feedbacks[idx].items(): self._put(f"collection-{env_id}/Format Success Rate - {k}", v)
             self._n[f"collection-{env_id}"] = self._n.get(f"collection-{env_id}", 0) + 1
             self._put(f"collection-{env_id}/step", self._n[f"collection-{env_id}"])
-            self._buffer.update(self._agg('collection-')); self._flush_if_due()
+            self._collection_count += 1
+            if self._collection_batch_size is None or self._collection_count % self._collection_batch_size == 0:
+                self._buffer.update(self._agg('collection-')); self._flush_if_due()
         except Exception as exc:
             self.logger.info(f"Exception when adding trajectory to tracker: {exc}")
 

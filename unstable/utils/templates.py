@@ -11,7 +11,6 @@ def get_algorithm_config(algorithm: str) -> dict:
 def get_learner_cls(algorithm: str) -> type:
     import unstable.learner
     match algorithm:
-        case "reinforce": return unstable.learner.reinforce.REINFORCELearner
         case "ppo": return unstable.learner.ppo.PPOLearner
         case "grpo": return unstable.learner.grpo.GRPOLearner
         case _: raise ValueError(f"Algorithm {algorithm} not found")
@@ -58,6 +57,18 @@ def get_reward_transformation_cls(reward_transformation: str) -> type:
         case _: raise ValueError(f"Reward transformation {reward_transformation} not found")
 
 def format_template(system: str = "", user: str = "", assistant: str = "") -> str: return f"{system}{user}{assistant}"
+
+def _llama_conv(messages: list) -> str:
+    """Build a Llama-3 multi-turn prompt from a list of {"role", "content"} dicts."""
+    prompt = (
+        "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\n"
+        "Cutting Knowledge Date: December 2023\nToday Date: 26 Jul 2024\n\n<|eot_id|>"
+    )
+    for msg in messages:
+        prompt += f"<|start_header_id|>{msg['role']}<|end_header_id|>\n\n{msg['content']}<|eot_id|>"
+    prompt += "<|start_header_id|>assistant<|end_header_id|>\n\n"
+    return prompt
+
 TEMPLATE_PARTS = {
     "default": {
         "user": lambda obs: f"<|im_start|>user\n{obs}<|im_end|>\n",
@@ -67,6 +78,18 @@ TEMPLATE_PARTS = {
         "system": "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\nCutting Knowledge Date: December 2023\nToday Date: 26 Jul 2024\n\n<|eot_id|>",
         "user": lambda obs: f"<|start_header_id|>user<|end_header_id|>\n\n{obs}<|eot_id|>\n",
         "assistant": "<|start_header_id|>assistant<|end_header_id|>"
+    },
+    "qwen3-zs": {
+        "user": lambda obs: f"<|im_start|>user\nYou are playing a two-player zero-sum game. Make valid actions to win.\nObservation: {obs}\nPlease reason step by step, and put your final answer within \\boxed{{}}.<|im_end|>\n",
+        "assistant": "<|im_start|>assistant\n"
+    },
+    "gemma3-zs": {
+        "user": lambda obs: f"<bos><start_of_turn>user\nYou are playing a two-player zero-sum game. Make valid actions to win.\nObservation: {obs}\nPlease reason step by step, and put your final answer within \\boxed{{}}.<end_of_turn>\n",
+        "assistant": "<start_of_turn>model\n"
+    },
+    "qwen3-sp": {
+        "user": lambda obs:  f"<|im_start|>user\nYou are playing a single-player game. Make valid actions to solve it completely.\nObservation: {obs}\nPlease reason step by step, and put your final answer within \\boxed{{}}.<|im_end|>\n",
+        "assistant": "<|im_start|>assistant\n"
     },
     "qwen3-math": {
         "user": lambda obs: f"<|im_start|>user\n{obs}\nPlease reason step by step, and put your final answer within \\boxed{{}}.<|im_end|>\n",
@@ -81,17 +104,8 @@ TEMPLATE_PARTS = {
         "user": lambda obs: f"<|im_start|>user\nYou are playing a two-player negotiation game.\nObservation: {obs}.\nPlease reason step by step.<|im_end|>\n",
         "assistant": "<|im_start|>assistant\n"
     },
-    "qwen3-zs": {
-        "user": lambda obs: f"<|im_start|>user\nYou are playing a two-player zero-sum game. Make valid actions to win.\nObservation: {obs}\nPlease reason step by step, and put your final answer within \\boxed{{}}.<|im_end|>\n",
-        "assistant": "<|im_start|>assistant\n"
-    },
-    "qwen3-sp": {
-        "user": lambda obs:  f"<|im_start|>user\nYou are playing a single-player game. Make valid actions to solve it completely.\nObservation: {obs}\nPlease reason step by step, and put your final answer within \\boxed{{}}.<|im_end|>\n",
-        "assistant": "<|im_start|>assistant\n"
-    },
-    "gemma3-zs": {
-        "user": lambda obs: f"<bos><start_of_turn>user\nYou are playing a two-player zero-sum game. Make valid actions to win.\nObservation: {obs}\nPlease reason step by step, and put your final answer within \\boxed{{}}.<end_of_turn>\n",
-        "assistant": "<start_of_turn>model\n"
+    "llama-conv": {
+        "user": _llama_conv,
     },
 }
 
@@ -104,19 +118,25 @@ def extract_action_and_format_feedback(raw_action: str) -> Tuple[str, Dict[str, 
     matches = re.findall(r"\\boxed\{(.*?)\}", raw_action)
     if matches:
         last_match = matches[-1].strip()
-        if last_match:  # non-empty boxed
+        if last_match:
             action = f"[{last_match}]" if "[" not in last_match else last_match
             has_think = 1
-        else:  # empty boxed
+        else:
             action = raw_action
             has_think = 0
-    else:  # no boxed at all
+    else:
         action = raw_action
         has_think = 0
 
     format_feedback = {"correct_answer_format": bool(has_think)}
     return action, format_feedback
 
+def format_feedback(raw_action: str) -> Dict[str, bool]:
+    matches = re.search(r"\\boxed\{.*?\}", raw_action)
+    if matches and matches.group(0).strip(): has_think = 1
+    else: has_think = 0
+    return raw_action, {"correct_answer_format": bool(has_think)}
+
 OBSERVATION_FORMATTING: Dict[str, Callable[[str], str]] = {key: (lambda key=key: lambda observation: apply_template(key, observation))() for key in TEMPLATE_PARTS}
-ACTION_EXTRACTION = {"default": extract_action_and_format_feedback, 'none': lambda raw_action: (raw_action, {})}
+ACTION_EXTRACTION = {"default": extract_action_and_format_feedback, 'judge': format_feedback}
 DEFAULT_LORA_CFG = {"lora_rank": 32, "lora_alpha": 32, "lora_dropout": 0.0, "target_modules": ["q_proj","k_proj","v_proj","o_proj","gate_proj", "up_proj","down_proj"]}

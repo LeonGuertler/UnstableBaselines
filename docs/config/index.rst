@@ -14,7 +14,7 @@ All parameters of the component are passed as arguments to the constructor.
    class MyModelSampler(BaseModelSampler):
         ...
 
-   config = get_algorithm_config("reinforce")
+   config = get_algorithm_config("grpo")
    config['learner']['learning_rate'] = 1e-5
    config['learner']['grad_clip'] = 0.2
    config['replay_buffer']['max_buffer_size'] = 800
@@ -30,7 +30,7 @@ You can find all default configuration files in the `unstable/config <https://gi
 
 --------------------------------
 
-**unstable.config.reinforce.yaml**
+**unstable.config.grpo.yaml**
 
 .. code-block:: yaml
    :linenos:
@@ -75,7 +75,7 @@ You can find all default configuration files in the `unstable/config <https://gi
 
    learner:
      num_gpus: 1
-     type: "reinforce"
+     type: "grpo"
      total_training_steps: *training_iterations
      model_name: *model_name
      local_batch_size: 384

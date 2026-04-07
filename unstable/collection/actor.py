@@ -20,15 +20,16 @@ class VLLMActor:
         self.gpu_ids = ray.get_gpu_ids()
         os.environ["CUDA_VISIBLE_DEVICES"] = ",".join(map(str, self.gpu_ids))
         engine_args = EngineArgs(
-            model=cfg["model_name"], enable_lora=True, max_loras=cfg["max_loras"], max_lora_rank=cfg["lora_config"]["lora_rank"], 
+            model=cfg["model_name"], enable_lora=True, max_loras=cfg["max_loras"], max_lora_rank=cfg["lora_config"]["lora_rank"],
             max_cpu_loras=cfg["max_loras"], max_num_seqs=cfg["max_parallel_seq"], max_model_len=cfg["max_model_len"],
-            disable_custom_all_reduce=True, enforce_eager=True, disable_log_stats=False
+            disable_custom_all_reduce=True, enforce_eager=False, disable_log_stats=False
         )
         try: self.engine = LLMEngine.from_engine_args(engine_args); self.logger.info("VLLM engine initialized successfully")
         except Exception as e: self.logger.error(f"VLLM engine initialization failed: {e}"); raise
         self.logger.info(f"vLLM model path or name: {engine_args.model}")
         self.logger.info(f"Model architecture: {self.engine.model_config.__dict__}")
         self.sampling_params = SamplingParams(temperature=cfg.get("temperature", 0.7), top_p=cfg.get("top_p", 0.95), top_k=cfg.get("top_k", 50), max_tokens=cfg.get("max_tokens", 4096), logprobs=1, prompt_logprobs=True)
+        self._max_parallel_seq = cfg["max_parallel_seq"]
         self._queue = deque()
         self._futures = {}
         self._next_id = 0
@@ -68,10 +69,11 @@ class VLLMActor:
         self.logger.info("Starting _batch_loop")
         while True:
             try:
-                await asyncio.sleep(0)
-                if time.monotonic() - self._last_step_time > 30: 
-                    self.logger.error(f"Potential deadlock detected - no engine steps for {time.monotonic() - self._last_step_time:.1f} seconds\nRunning requests: {dict(self._running)}\nQueue size: {len(self._queue)}") # 30 second deadlock detection
-                while self._queue:
+                if self._running < self._max_parallel_seq:
+                    await asyncio.sleep(0)
+                if time.monotonic() - self._last_step_time > 30:
+                    self.logger.error(f"Potential deadlock detected - no engine steps for {time.monotonic() - self._last_step_time:.1f} seconds\nRunning requests: {self._running}\nQueue size: {len(self._queue)}") # 30 second deadlock detection
+                while self._queue and self._running < self._max_parallel_seq:
                     prompt, path, sampling_params, fut = self._queue.popleft()
                     lora = path or "base"
                     req_id = str(self._next_id); self._next_id += 1
@@ -105,6 +107,7 @@ class VLLMActor:
                         continue
                 if not self._queue and self._running == 0:
                     self._last_step_time = time.monotonic()
+                    await asyncio.sleep(0.001)
                     continue
                 try:
                     step_start = time.monotonic()
@@ -113,7 +116,7 @@ class VLLMActor:
                     self._last_step_time = time.monotonic()
                     if step_duration > 5.0: self.logger.warning(f"Slow engine step: {step_duration:.1f}s") # Log slow steps
                 except Exception as exc:   
-                    self.logger.exception(f"engine.step() failed - running: {dict(self._running)}"); await asyncio.sleep(1.0)  # Brief pause before retry
+                    self.logger.exception(f"engine.step() failed - running: {self._running}"); await asyncio.sleep(1.0)  # Brief pause before retry
                     continue
                 for out in outs:
                     req_id = out.request_id

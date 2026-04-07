@@ -4,20 +4,20 @@
         <img style="width: 250px; margin-top: 100px;" src="_static/ub.png" />
     </div>
 
-    <h3 align="center", style="margin-bottom: 50px;">An Async, Online, Multi-Turn, Multi-Agent RL library for training reasoning models on TextArena games.</h3>
+    <h3 align="center", style="margin-bottom: 50px;">An Async, Online, Multi-Agent RL library for training reasoning models on TextArena environments.</h3>
 
 
 
-Unstable Baselines is a **lightweight reinforcement-learning research library** focused on self-play for text-based games. 
-Through its deep integration with TextArena, it supports wide range of single and multi-player games. 
-The interface is simple and hackable, making it easy to experiment, extend and customize: 
+Unstable Baselines is a **lightweight reinforcement-learning research library** focused on self-play for text-based games.
+Through its deep integration with TextArena, it supports wide range of single and multi-player environments.
+The interface is simple and hackable, making it easy to experiment, extend and customize:
 
 
 .. code-block:: python
 
    from unstable import train, get_algorithm_config
 
-   config = get_algorithm_config("reinforce")
+   config = get_algorithm_config("grpo")
    config['learner']['learning_rate'] = 1e-5
    config['learner']['grad_clip'] = 0.2
    config['replay_buffer']['max_buffer_size'] = 800
@@ -28,7 +28,7 @@ The interface is simple and hackable, making it easy to experiment, extend and c
 .. admonition:: Why "Unstable"?
    :class: tip
 
-   Our project is meant for rapid prototying of new research ideas. 
+   Our project is meant for rapid prototying of new research ideas.
 
 .. note::
 
@@ -61,7 +61,7 @@ The interface is simple and hackable, making it easy to experiment, extend and c
     :hidden:
     :caption: Algorithms
 
-    algorithms/reinforce
+    algorithms/grpo
     algorithms/ppo
 
 .. toctree::
@@ -69,7 +69,10 @@ The interface is simple and hackable, making it easy to experiment, extend and c
    :hidden:
    :caption: Tutorials
 
-   tutorials/ppo
+   tutorials/experiments
+   tutorials/reinforce_tictactoe
+   tutorials/reinforce_math
+   tutorials/prm
 
 .. toctree::
    :maxdepth: 2

@@ -35,21 +35,7 @@ importance ratio:
    = \sum_{t=1}^{T_i}
      \log \pi_\theta(a_{i,t} \mid s_{i,t})
 
-and clipped value loss:
-
-.. math::
-
-   \mathcal{L}_{\text{value}}(\theta)
-   = \frac{1}{2N} \sum_{i=1}^{N}
-     \max\!\big(
-       (V_\theta(s_i) - G_i)^2,\;
-       (\bar{V}_i - G_i)^2
-     \big)
-
-   \bar{V}_i
-   = V_{\text{old}}(s_i)
-   + \text{clamp}\!\big(V_\theta(s_i) - V_{\text{old}}(s_i),\, -\epsilon_v,\, \epsilon_v\big)
-
+and clipped value loss.
 
 .. admonition:: Actor-Critic Architecture
    :class: tip
@@ -59,39 +45,38 @@ and clipped value loss:
 Hyperparameters
 """""""""""""""
 
-**epochs: int (default: 2)**
-  Number of epochs to train the policy.
-**local_batch_size: int (default: 256)**
-  Per-GPU batch size.
-**micro_batch_size: int (default: 1)**
-  The micro batch size used during training.
-**learning_rate: float (default: 1e-5)**
-  Learning rate for the policy.
-**lr_scheduler_type: str (default: "constant")**
-  Learning rate scheduler type.
-**lr_warmup_ratio: float (default: 0.01)**
-  Learning rate warmup ratio.
-**upper_clip_ratio: float (default: 0.4)**
-  Upper bound for the asymmetric clipping of the importance ratio.
-**lower_clip_ratio: float (default: 0.2)**
-  Lower bound for the asymmetric clipping of the importance ratio.
-**grad_clip: float (default: 0.2)**
-  Gradient clipping value for the policy.
-**entropy_coeff: float (default: 0.0)**
-  Entropy coefficient.
-**value_coeff: float (default: 0.5)**
-  Coefficient for the value function loss.
-**beta: float (default: 0.0)**
-  Beta coefficient to weight the KL divergence to the reference model. When larger than 0.0, a reference model must be loaded.
-**infer_micro_batch_size: int (default: 4)**
-  Batch size for value inference before training.
-**critic_learning_rate: float (default: 1e-5)**
-  Learning rate for the critic.
-**clip_value: float (default: 0.2)**
-  Clipping value for the critic.
-**gamma: float (default: 0.99)**
-  Discount factor.
-**gae_lambda: float (default: 0.95)**
-  Lambda for the GAE.
-**normalize_adv: bool (default: True)**
-  Whether to normalize the advantage.
+**epochs** *int* (default: ``2``) — Passes over the training batch per update.
+
+**local_batch_size** *int* (default: ``256``) — Steps per gradient update.
+
+**micro_batch_size** *int* (default: ``1``) — Steps per micro-batch; controls gradient accumulation.
+
+**learning_rate** *float* (default: ``1e-5``)
+
+**lr_scheduler_type** *str* (default: ``"constant"``)
+
+**lr_warmup_ratio** *float* (default: ``0.01``)
+
+**grad_clip** *float* (default: ``0.2``) — Maximum gradient norm.
+
+**upper_clip_ratio** *float* (default: ``0.4``) — Upper bound for asymmetric importance ratio clipping.
+
+**lower_clip_ratio** *float* (default: ``0.2``) — Lower bound for asymmetric importance ratio clipping.
+
+**entropy_coeff** *float* (default: ``0.0``) — Entropy bonus coefficient.
+
+**value_coeff** *float* (default: ``0.5``) — Coefficient for the value function loss.
+
+**beta** *float* (default: ``0.0``) — KL penalty coefficient against the reference model.
+
+**infer_micro_batch_size** *int* (default: ``4``) — Batch size for value inference before training.
+
+**critic_learning_rate** *float* (default: ``1e-5``) — Learning rate for the critic.
+
+**clip_value** *float* (default: ``0.2``) — Clipping range for the value function loss.
+
+**gamma** *float* (default: ``0.99``) — Discount factor.
+
+**gae_lambda** *float* (default: ``0.95``) — Lambda for GAE.
+
+**normalize_adv** *bool* (default: ``True``) — Whether to z-score normalize advantages before the update.

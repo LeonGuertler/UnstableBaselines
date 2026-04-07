@@ -42,7 +42,17 @@ class BaseModelSampler:
     def get_all_models(self): return copy.deepcopy(self._db)
     def get_current_ckpt(self) -> str|None: return self._current_ckpt_uid
     def get_name_or_lora_path(self, uid: str) -> str: return self._db[uid].path_or_name
-    def add_fixed(self, name: str, prior_mu: float = 25.): 
+    def add_eval_checkpoint(self, uid: str, path: str):
+        if uid in self._db: return
+        self._db[uid] = ModelMeta(uid=uid, kind="checkpoint", path_or_name=path, rating=self.TS.create_rating(), iteration=0, eval=True)
+        self.logger.info(f"added eval-only checkpoint: {uid}, path {path}")
+
+    def add_fixed_checkpoint(self, uid: str, path: str):
+        if uid in self._db: return
+        self._db[uid] = ModelMeta(uid=uid, kind="fixed_checkpoint", path_or_name=path, rating=self.TS.create_rating(), iteration=0)
+        self.logger.info(f"added fixed checkpoint opponent: {uid}, path {path}")
+
+    def add_fixed(self, name: str, prior_mu: float = 25.):
         if f"fixed-{name}" not in self._db: self._db[f"fixed-{name}"] = ModelMeta(f"fixed-{name}", "fixed", name, self.TS.create_rating(mu=prior_mu))
 
     def get_current_ckpt(self):         
@@ -50,7 +60,7 @@ class BaseModelSampler:
         return self._current_ckpt_uid, current_ckpt_lora_path
 
     def get_eval_checkpoints(self):
-        candidates = [m for m in self._db.values() if m.kind == "checkpoint" and m.eval and m.uid != self._current_ckpt_uid]
+        candidates = [m for m in self._db.values() if m.kind == "checkpoint" and m.eval]
         if not candidates: candidates = [self._db[self._current_ckpt_uid]]
         return [(m.uid, m.kind, None, m.path_or_name, self.get_opponent_sampling_params()) for m in candidates]
     
@@ -104,8 +114,8 @@ class FixedOpponentModelSampler(BaseModelSampler):
         super().__init__(**kwargs)
         self.include_current_ckpt = include_current_ckpt
 
-    def sample_opponent(self): 
-        available_models = [model_meta for uid, model_meta in self.get_all_models().items() if (model_meta.active and model_meta.kind=="fixed") or (model_meta.uid==self.get_current_ckpt() and self.include_current_ckpt)]
+    def sample_opponent(self):
+        available_models = [model_meta for uid, model_meta in self.get_all_models().items() if (model_meta.active and model_meta.kind in ("fixed", "fixed_checkpoint")) or (model_meta.uid==self.get_current_ckpt()[0] and self.include_current_ckpt)]
         opponent_meta = random.choice(available_models)
         self.logger.info(f"sampling fixed opponent: {opponent_meta.uid}")
         return opponent_meta.uid, opponent_meta.kind, None, opponent_meta.path_or_name, self.get_opponent_sampling_params()

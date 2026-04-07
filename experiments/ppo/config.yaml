@@ -1,16 +1,16 @@
-run: "default"
+run: "ppo-simpletак"
 project: "Unstable-Baselines"
-model_name: &model_name "Qwen/Qwen3-1.7B-Base"
+model_name: &model_name "Qwen/Qwen3-4B-Base"
 max_concurrent_workers: 384
 collection_workers: 384
 evaluation_workers: 384
 evaluation_runs: 256
 evaluation_steps: 25
-logging_dir: "outputs"
+logging_dir: "experiments/ppo/outputs"
 training_iterations: &training_iterations 600
 
 checkpoint:
-  policy: 
+  policy:
     uid: "base"
     path: null
   critic:

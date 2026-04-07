@@ -30,9 +30,11 @@ class PPOLearner(BaseLearner):
         critic_learning_rate: float = 1e-6,
         critic_lr_warmup_ratio: float = 0.1,
         critic_lr_scheduler_type: str = "constant",
+        loss: str = "dr-grpo",
         **kwargs
     ):
         super().__init__(value_head=True, **kwargs)
+        self.loss = loss
         self.upper_clip_ratio = upper_clip_ratio
         self.lower_clip_ratio = lower_clip_ratio
         self.infer_micro_batch_size = infer_micro_batch_size
@@ -59,24 +61,25 @@ class PPOLearner(BaseLearner):
             ref_logp = F.log_softmax(ref_out.logits / self.temperature, dim=-1)
             ref_tok_logp = ref_logp[:, :-1, :].gather(-1, input_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
             self.model.enable_adapter_layers()
-        # Compute policy logps and values
+        # Compute policy logps
         out = self.engine(input_ids=input_ids, attention_mask=attention_mask)
         logits = out.logits[:, :-1, :] / self.temperature
         logp = F.log_softmax(logits, dim=-1)
         tok_logp = logp.gather(-1, input_ids[:, 1:].unsqueeze(-1)).squeeze(-1)
-        seq_logp = (tok_logp * response_mask).sum(1) / self.max_generation_len
         # Entropy (computed from raw logits, matching TRL's entropy_from_logits)
         probs = torch.softmax(logits, dim=-1)
         entropy_per_token = torch.logsumexp(logits, dim=-1) - (probs * logits).sum(dim=-1)
         entropy_seq = self._masked_mean(entropy_per_token, response_mask, axis=1)
         # KL divergence against base model
         kl_seq = self._masked_mean(torch.exp(tok_logp - ref_tok_logp) - (tok_logp - ref_tok_logp) - 1, response_mask, axis=1)
-        # Importance ratio
-        vllm_seq_logp = (vllm_logprobs * response_mask).sum(1) / self.max_generation_len
-        ratio = torch.exp(seq_logp - vllm_seq_logp)
+        # Token-wise importance ratio and PPO clip
+        ratio = torch.exp(tok_logp - vllm_logprobs)
         clipped_ratio = torch.clamp(ratio, 1 - self.lower_clip_ratio, 1 + self.upper_clip_ratio)
-        # Policy loss
-        policy_loss = -torch.min(advs * ratio, advs * clipped_ratio).mean()
+        # Policy loss (token-wise PPO clip)
+        tok_policy_loss = -torch.min(advs.unsqueeze(1) * ratio, advs.unsqueeze(1) * clipped_ratio)
+        if self.loss == "grpo": policy_loss = ((tok_policy_loss * response_mask).sum(1) / response_mask.sum(1).clamp(min=1)).mean()
+        elif self.loss == "drgrpo": policy_loss = ((tok_policy_loss * response_mask).sum(1) / self.max_generation_len).mean()
+        else: raise ValueError(f"Unsupported loss summation {self.loss}")
         kl_loss = self.beta * kl_seq.mean()
         entropy_loss = -self.entropy_coeff * entropy_seq.mean()
         loss = policy_loss + kl_loss + entropy_loss
@@ -90,9 +93,16 @@ class PPOLearner(BaseLearner):
         value_loss = 0.5 * torch.max((value - returns) ** 2, (value_clipped - returns) ** 2).mean()
         self.critic_engine.backward(self.value_coeff * value_loss)
 
-        return {"loss": loss.item(), "policy_loss": policy_loss.item(), "kl_loss": kl_loss.item(), "seq_logp_mean": seq_logp.mean().item(), "ref_logp_mean": (ref_tok_logp * response_mask).sum(1).mean().item(), "ratio": ratio.mean().item(), 
-                "vllm_seq_logp_mean": vllm_seq_logp.mean().item(), "avg_train_len": sum(lengths) / len(lengths), "pct_truncated": pct_truncated, "offpolicy_ratio": ratio.mean().item(), "kl_seq": kl_seq.mean().item(), 
-                "entropy": entropy_seq.mean().item(), "clip_frac": ((ratio < 1 - self.lower_clip_ratio) | (ratio > 1 + self.upper_clip_ratio)).float().mean().item(), "value_loss": value_loss.item()}
+        n_resp_tokens = response_mask.sum()
+        return {"loss": loss.item(), "policy_loss": policy_loss.item(), "kl_loss": kl_loss.item(),
+                "mean_logp": (tok_logp * response_mask).sum().item() / n_resp_tokens.item(),
+                "ref_logp_mean": (ref_tok_logp * response_mask).sum().item() / n_resp_tokens.item(),
+                "vllm_logp_mean": (vllm_logprobs * response_mask).sum().item() / n_resp_tokens.item(),
+                "avg_train_len": sum(lengths) / len(lengths), "pct_truncated": pct_truncated,
+                "offpolicy_ratio": (ratio * response_mask).sum().item() / n_resp_tokens.item(),
+                "kl_seq": kl_seq.mean().item(), "entropy": entropy_seq.mean().item(),
+                "clip_frac": ((ratio < 1 - self.lower_clip_ratio) | (ratio > 1 + self.upper_clip_ratio)).float().mul(response_mask).sum().item() / n_resp_tokens.item(),
+                "value_loss": value_loss.item()}
 
     @staticmethod
     def _compute_gae(rewards, values, gamma, gae_lambda):
